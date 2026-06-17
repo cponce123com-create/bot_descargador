@@ -21,7 +21,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Mensaje de ayuda detallado."""
-    text = "\U0001f4d6 *Ayuda*\n\n*YouTube:*\n\u2022 Envia cualquier enlace de YouTube\n\u2022 Elige entre video (varias calidades) o solo audio\n\u2022 Limite: 50MB por archivo\n\n*TikTok:*\n\u2022 Envia cualquier enlace de TikTok\n\u2022 Se descarga SIN marca de agua\n\u2022 Si falla, se intenta con marca de agua\n\n*Limites:*\n\u2022 Videos >50MB no pueden enviarse por Telegram\n\u2022 Para YouTube, puedes elegir solo audio en ese caso\n\n*Cookies de YouTube:*\n\u2022 Usa /cookies para enviar tus cookies y evitar bloqueos de YouTube"
+    text = "\U0001f4d6 *Ayuda*\n\n*YouTube:*\n\u2022 Envia cualquier enlace de YouTube\n\u2022 Elige entre video (varias calidades) o solo audio\n\u2022 Limite: 300MB por archivo\n\n*TikTok:*\n\u2022 Envia cualquier enlace de TikTok\n\u2022 Se descarga SIN marca de agua\n\u2022 Si falla, se intenta con marca de agua\n\n*Limites:*\n\u2022 Videos >300MB no pueden enviarse por Telegram\n\u2022 Para YouTube, puedes elegir solo audio en ese caso\n\n*Cookies de YouTube:*\n\u2022 Usa /cookies para enviar tus cookies y evitar bloqueos de YouTube"
     await update.message.reply_text(text, parse_mode="Markdown")
 
 

@@ -63,7 +63,7 @@ async def handle_tiktok(update, context, url):
         return ConversationHandler.END
     if os.path.getsize(path) > MAX_FILE_SIZE:
         cleanup(path)
-        await status.edit_text("\u274c El video es demasiado grande para Telegram (max 50MB).")
+        await status.edit_text("\u274c El video es demasiado grande para Telegram (max 300MB).")
         return ConversationHandler.END
     try:
         await status.edit_text("\U0001f4e4 Enviando video...")
@@ -92,11 +92,11 @@ async def format_callback(update, context):
     fmt = {"yt_best": "best", "yt_medium": "best[height<=720]"}
     path = download_audio(url) if choice == "yt_audio" else download_video(url, fmt.get(choice, "best"))
     if not path:
-        await q.edit_message_text("\u274c Error. Video >50MB? Prueba con audio.")
+        await q.edit_message_text("\u274c Error. Video grande? Prueba con audio.")
         return ConversationHandler.END
     if os.path.getsize(path) > MAX_FILE_SIZE:
         cleanup(path)
-        await q.edit_message_text("\u274c Excede 50MB. Prueba con audio o menor calidad.")
+        await q.edit_message_text("\u274c Excede 300MB. Prueba con audio o menor calidad.")
         return ConversationHandler.END
     try:
         await q.edit_message_text("\U0001f4e4 Enviando...")

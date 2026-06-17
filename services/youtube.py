@@ -122,7 +122,7 @@ def download_video(url, format_id="best"):
         "quiet": True, "no_warnings": True,
         "extractor_retries": 3, "retries": 5, "fragment_retries": 5,
         "http_headers": _HEADERS,
-        "max_filesize": 50 * 1024 * 1024,
+        "max_filesize": 300 * 1024 * 1024,
         "outtmpl": f"{DOWNLOAD_DIR}/%(title)s.%(ext)s",
         "restrictfilenames": True,
     }
@@ -172,7 +172,7 @@ def download_audio(url):
         "outtmpl": f"{DOWNLOAD_DIR}/%(title)s.%(ext)s",
         "restrictfilenames": True,
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
-        "max_filesize": 50 * 1024 * 1024,
+        "max_filesize": 300 * 1024 * 1024,
     }
     if os.path.isfile(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
