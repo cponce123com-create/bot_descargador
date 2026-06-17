@@ -60,9 +60,12 @@ def _crop_vertical(path):
             new_w = w; new_h = int(w * 16 / 9); y_off = (h - new_h) // 2; x_off = 0
         else:
             new_h = h; x_off = (w - new_w) // 2; y_off = 0
-        cmd = ["ffmpeg","-y","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}","-c:a","copy",out]
-        logger.info("Cropping %dx%d -> %dx%d",w,h,new_w,new_h)
-        r = subprocess.run(cmd,capture_output=True,text=True,timeout=180)
+        new_w = new_w - (new_w % 2)  # Asegurar par
+        if new_w < 2: new_w = 2
+        cmd = ["ffmpeg","-y","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}",
+               "-preset","ultrafast","-c:a","copy",out]
+        logger.info("Cropping %dx%d -> %dx%d (ultrafast)",w,h,new_w,new_h)
+        r = subprocess.run(cmd,capture_output=True,text=True,timeout=120)
         if r.returncode==0 and os.path.isfile(out) and os.path.getsize(out)>1024:
             os.remove(path); logger.info("Vertical crop OK"); return out
         logger.warning("ffmpeg fail: %s",r.stderr[:200])
