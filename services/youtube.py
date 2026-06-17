@@ -65,7 +65,7 @@ def _crop_vertical(path):
         cmd = ["ffmpeg","-y","-nostdin","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}",
                "-c:v","mpeg4","-qscale:v","3","-c:a","aac","-b:a","64k",out]
         logger.info("Cropping %dx%d -> %dx%d (ultrafast)",w,h,new_w,new_h)
-        r = subprocess.run(cmd,capture_output=True,text=True,timeout=60)
+        r = subprocess.run(cmd,capture_output=True,text=True,timeout=180)
         if r.returncode==0 and os.path.isfile(out) and os.path.getsize(out)>1024:
             os.remove(path); logger.info("Vertical crop OK"); return out
         logger.warning("ffmpeg fail: %s",r.stderr[:200])
