@@ -34,12 +34,7 @@ def _oembed(url):
 
 def get_video_info(url):
     t = _oembed(url)
-    if t:
-        return {"title":t,"duration":0,
-            "formats":[
-                {"format_id":"best","ext":"mp4","format_note":"Mejor calidad","resolution":"Variable"},
-                {"format_id":"best[height<=480]","ext":"mp4","format_note":"Mediano 480p","resolution":"480p"},
-                {"format_id":"worst","ext":"mp4","format_note":"Bajo peso","resolution":"360p"}]}
+    if t: return {"title":t,"duration":0,"formats":[{"format_id":"360","ext":"mp4","format_note":"Video 360p","resolution":"360p"}]}
     return None
 
 def validate_cookies():
@@ -50,16 +45,12 @@ def validate_cookies():
     if ok and o.strip(): return True,"OK"
     return False,s[:200] or "Error"
 
-def download_video(url, format_id="best"):
+def download_video(url, format_id="360"):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
-    # Formatos priorizando tamano: lower height = menor peso
-    fmts = {
-        "best":["best","bestvideo+bestaudio","best[ext=mp4]","18"],
-        "best[height<=480]":["best[height<=480]","bestvideo[height<=360]+bestaudio","worst","18","best"],
-        "worst":["worst","18","best"],
-    }
+    # Solo 360p - formatos priorizando menor peso
+    fmts = ["best[height<=360]","bestvideo[height<=360]+bestaudio","worst","18","best"]
     last = ""
-    for fmt in fmts.get(format_id,["best","18"]):
+    for fmt in fmts:
         o = os.path.join(DOWNLOAD_DIR,f"yt_%(id)s_{uniq}.%(ext)s")
         ok,stdout,stderr = _run(["--format",fmt,"--output",o] + BASE + SINGLE + [url])
         if ok:
