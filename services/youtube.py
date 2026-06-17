@@ -1,4 +1,4 @@
-"""YouTube downloader usando yt-dlp directo."""
+"""YouTube downloader optimizado."""
 
 import os, subprocess, logging
 from config import DOWNLOAD_DIR, COOKIES_FILE
@@ -7,8 +7,11 @@ YT = "yt-dlp"
 MAX = 300 * 1024 * 1024
 SINGLE = ["--no-playlist", "--playlist-end", "1"]
 
-def _run(args, timeout=120):
-    cmd = [YT, "--no-warnings", "--quiet"]
+# Flags de velocidad: flat (info rapida), no-mtime, no-part, buffers
+FAST = ["--extract-flat", "--no-mtime", "--no-part"]
+
+def _run(args, timeout=90):
+    cmd = [YT, "--no-warnings"]
     if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies", COOKIES_FILE])
     cmd.extend(args)
     logger.debug("CMD: %s", " ".join(cmd))
@@ -19,8 +22,7 @@ def _run(args, timeout=120):
     except Exception as e: return False, "", str(e)
 
 def _oembed(url):
-    import requests
-    from config import HTTP_TIMEOUT
+    import requests; from config import HTTP_TIMEOUT
     try:
         r = requests.get("https://www.youtube.com/oembed", params={"url":url,"format":"json"}, headers={"User-Agent":"Mozilla/5.0 Chrome/125.0"}, timeout=HTTP_TIMEOUT)
         return r.json().get("title","Video") if r.status_code==200 else None
@@ -28,20 +30,18 @@ def _oembed(url):
 
 def get_video_info(url):
     t = _oembed(url)
-    if t:
-        return {"title":t, "duration":0,
-            "formats":[
-                {"format_id":"best","ext":"mp4","format_note":"Mejor calidad","resolution":"1080p"},
-                {"format_id":"best[height<=720]","ext":"mp4","format_note":"HD 720p","resolution":"720p"},
-                {"format_id":"worst","ext":"mp4","format_note":"Baja calidad","resolution":"360p"}]}
+    if t: return {"title":t,"duration":0,
+        "formats":[{"format_id":"best","ext":"mp4","format_note":"Mejor calidad","resolution":"1080p"},
+                  {"format_id":"best[height<=720]","ext":"mp4","format_note":"HD 720p","resolution":"720p"},
+                  {"format_id":"worst","ext":"mp4","format_note":"Baja calidad","resolution":"360p"}]}
     return None
 
 def validate_cookies():
     if not os.path.isfile(COOKIES_FILE): return False, "No hay cookies"
-    ok, o, s = _run(["--simulate","--print","title","--format","best"]+SINGLE+["https://www.youtube.com/watch?v=jNQXAC9IVRw"],30)
-    if any(x in s.lower() for x in ["no video formats","no supported javascript runtime"]): logger.error("ENV ERROR"); return False, "ENV_ERROR"
+    ok, o, s = _run(["--simulate","--print","title","--format","best"]+SINGLE+["https://www.youtube.com/watch?v=jNQXAC9IVRw"],20)
+    if any(x in s.lower() for x in ["no video formats","no supported javascript"]): logger.error("ENV ERROR"); return False, "ENV_ERROR"
     if "Sign in" in s: return False, "YOUTUBE_BLOCK"
-    if ok and o.strip(): logger.info("Cookies OK"); return True, "OK"
+    if ok and o.strip(): return True, "OK"
     return False, s[:200] or "Error"
 
 def download_video(url, format_id="best"):
@@ -50,15 +50,14 @@ def download_video(url, format_id="best"):
              "worst":["worst","18","best"]}
     last = ""
     for fmt in specs.get(format_id,["best","18"]):
-        p = os.path.join(DOWNLOAD_DIR, f"yt_video.%(ext)s")
-        ok, o, s = _run(["--format",fmt,"--merge-output-format","mp4","--output",p,"--max-filesize","300M"]+SINGLE+[url])
+        p = os.path.join(DOWNLOAD_DIR, "yt_video.%(ext)s")
+        ok, o, s = _run(["--format",fmt,"--merge-output-format","mp4","--output",p,"--max-filesize","300M"]+FAST+SINGLE+[url])
         if ok:
             for f in os.listdir(DOWNLOAD_DIR):
                 fp = os.path.join(DOWNLOAD_DIR, f)
                 if os.path.isfile(fp) and not f.startswith("._") and os.path.getsize(fp) > 1024:
                     sz = os.path.getsize(fp)//1024//1024
-                    logger.info("Descargado: %s (%d MB)", f, sz)
-                    return fp, ""
+                    logger.info("OK: %s (%d MB)", f, sz); return fp, ""
         last = s or "Error"
         if "Requested format" not in s: continue
         last = "FORMATO_NO_DISPONIBLE"
@@ -66,9 +65,9 @@ def download_video(url, format_id="best"):
 
 def download_audio(url):
     p = os.path.join(DOWNLOAD_DIR, "yt_audio.%(ext)s")
-    ok, o, s = _run(["--format","bestaudio/best","--extract-audio","--audio-format","mp3","--output",p,"--max-filesize","300M"]+SINGLE+[url])
+    ok, o, s = _run(["--format","bestaudio/best","--extract-audio","--audio-format","mp3","--output",p,"--max-filesize","300M"]+FAST+SINGLE+[url])
     if ok:
         for f in os.listdir(DOWNLOAD_DIR):
-            if f.endswith(".mp3") and os.path.getsize(os.path.join(DOWNLOAD_DIR,f)) > 1024:
-                return os.path.join(DOWNLOAD_DIR, f), ""
+            if f.endswith(".mp3") and os.path.getsize(os.path.join(DOWNLOAD_DIR,f))>1024:
+                return os.path.join(DOWNLOAD_DIR,f),""
     return None, s[:100] or "Error"
