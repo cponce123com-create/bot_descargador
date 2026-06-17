@@ -127,16 +127,27 @@ def download_video(url, format_id="best"):
         "restrictfilenames": True,
     }
 
-    strategies = [
-        {**base_opts, "format": format_id, "extractor_args": {"youtube": "player_client=android"}},
-        {**base_opts, "format": format_id},
-    ]
+    # Multiples formatos a probar (del mas especifico al mas generico)
+    formatos_a_probar = [format_id]
+    if format_id == "best[height<=720]":
+        formatos_a_probar = [
+            "bestvideo[height<=720]+bestaudio/best[height<=720]",
+            "best[height<=720]",
+            "best",
+        ]
+    elif format_id == "worst":
+        formatos_a_probar = ["worst", "best"]
 
-    # Agregar cookies si existen
+    strategies = []
+    for fmt in formatos_a_probar:
+        strategies.append({**base_opts, "format": fmt, "extractor_args": {"youtube": "player_client=android"}})
+        strategies.append({**base_opts, "format": fmt})
+
+    # Agregar cookies a TODAS las estrategias
     if os.path.isfile(COOKIES_FILE):
         for strat in strategies:
-            if "extractor_args" in strat:
-                strat["cookiefile"] = COOKIES_FILE
+            strat["cookiefile"] = COOKIES_FILE
+        logger.info("Cookies agregadas a %d estrategias", len(strategies))
 
     for i, opts in enumerate(strategies):
         try:
@@ -154,7 +165,7 @@ def download_video(url, format_id="best"):
                     logger.info("Estrategia %d OK: %s (%d MB)", i, filename, fsize // 1024 // 1024)
                     return filename
         except Exception as e:
-            logger.warning("Estrategia %d fallo: %s", i, str(e)[:200])
+            logger.warning("Estrategia %d: %s", i, str(e)[:150])
             continue
 
     logger.error("Todas las estrategias fallaron para %s", url)
