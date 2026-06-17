@@ -11,7 +11,7 @@ from config import DOWNLOAD_DIR, YT_DLP_OPTIONS, HTTP_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-COOKIES_FILE = "cookies.txt"
+COOKIES_FILE = os.path.abspath("cookies.txt")
 
 _HEADERS = {
     "User-Agent": (
@@ -145,6 +145,13 @@ def download_video(url, format_id="best"):
 
     # Agregar cookies a TODAS las estrategias
     if os.path.isfile(COOKIES_FILE):
+        # Debug: ver formato de cookies
+        try:
+            with open(COOKIES_FILE) as cf:
+                first = cf.readline().strip()
+            logger.info("Cookies formato: %s", first[:100])
+        except Exception:
+            pass
         for strat in strategies:
             strat["cookiefile"] = COOKIES_FILE
         logger.info("Cookies agregadas a %d estrategias", len(strategies))

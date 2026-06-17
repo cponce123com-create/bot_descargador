@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
-COOKIES_FILE = "cookies.txt"
+COOKIES_FILE = os.path.abspath("cookies.txt")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -67,6 +67,10 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         size = len(content_check)
+        # Log formato para debug
+        first_line = content_check.split("\n")[0] if content_check else "(vacio)"
+        logger.info("Cookies OK: %d bytes, formato: %s, tiene .youtube.com: %s",
+                     size, first_line[:80], ".youtube.com" in content_check)
         await update.message.reply_text(
             f"\u2705 *Cookies guardadas correctamente*\n\n"
             + f"Archivo: {size} bytes\n"
