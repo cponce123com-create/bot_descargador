@@ -1,104 +1,165 @@
 """
-Servicio de descarga de YouTube usando yt-dlp.
-Con multiples estrategias para evitar bloqueos.
+Servicio de descarga de YouTube.
+Usa oEmbed API para info (sin bloqueos) y yt-dlp con cookies para descarga.
 """
 
 import os
+import json
 import logging
+import requests
 import yt_dlp
-from config import DOWNLOAD_DIR, YT_DLP_OPTIONS
+from config import DOWNLOAD_DIR, YT_DLP_OPTIONS, HTTP_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-# Headers realistas
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/125.0.0.0 Safari/537.36"
-)
+COOKIES_FILE = "cookies.txt"
 
-# Distintas estrategias de extraccion para YouTube
-_EXTRACTOR_ARGS = [
-    # Estrategia 1: Android (menos bloqueado)
-    {"youtube": "player_client=android"},
-    # Estrategia 2: Web + Android
-    {"youtube": "player_client=web,android"},
-    # Estrategia 3: Sin restricciones
-    {},
-]
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+}
 
 
-def _build_opts(extra_opts=None, extractor_args_idx=0):
-    """Construye opciones de yt-dlp con la estrategia indicada."""
+def _get_oembed_info(url):
+    """
+    Obtiene info basica via oEmbed API de YouTube.
+    No requiere autenticacion y funciona desde cualquier IP.
+    """
+    try:
+        oembed_url = "https://www.youtube.com/oembed"
+        resp = requests.get(
+            oembed_url,
+            params={"url": url, "format": "json"},
+            headers=_HEADERS,
+            timeout=HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "title": data.get("title", "Video"),
+            "author": data.get("author_name", "Desconocido"),
+            "duration": 0,  # oEmbed no da duracion :(
+            "thumbnail": data.get("thumbnail_url", ""),
+        }
+    except Exception as e:
+        logger.warning("oEmbed fallo: %s", e)
+        return None
+
+
+def _estimate_duration(url):
+    """
+    Intenta obtener la duracion via scraping minimo.
+    Si falla, retorna 0.
+    """
+    try:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": True,
+            "extractor_args": {"youtube": "player_client=android"},
+            "http_headers": _HEADERS,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info:
+                return info.get("duration", 0)
+    except Exception:
+        pass
+    return 0
+
+
+def get_video_info(url):
+    """
+    Obtiene informacion del video.
+    Usa oEmbed API (no requiere auth) + yt-dlp flat como respaldo.
+    Retorna un dict con title, duration, formats (lista basica).
+    """
+    # 1. Intentar con oEmbed (funciona siempre)
+    oembed = _get_oembed_info(url)
+    if oembed:
+        duration = _estimate_duration(url)
+        # Formato unico (simplificado - sin lista real de formatos)
+        formats = [
+            {"format_id": "best", "ext": "mp4", "filesize": 0,
+             "format_note": "Mejor calidad", "resolution": "1080p",
+             "acodec": "aac", "vcodec": "h264"},
+            {"format_id": "best[height<=720]", "ext": "mp4", "filesize": 0,
+             "format_note": "HD 720p", "resolution": "720p",
+             "acodec": "aac", "vcodec": "h264"},
+            {"format_id": "worst", "ext": "mp4", "filesize": 0,
+             "format_note": "Baja calidad", "resolution": "360p",
+             "acodec": "aac", "vcodec": "h264"},
+        ]
+        return {
+            "title": oembed["title"],
+            "duration": duration or 0,
+            "formats": formats,
+        }
+
+    # 2. Fallback: yt-dlp con extract_flat
+    try:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": True,
+            "http_headers": _HEADERS,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info:
+                return {
+                    "title": info.get("title", "Video"),
+                    "duration": info.get("duration", 0),
+                    "formats": [
+                        {"format_id": "best", "ext": "mp4", "filesize": 0,
+                         "format_note": "Mejor calidad", "resolution": "1080p",
+                         "acodec": "aac", "vcodec": "h264"},
+                        {"format_id": "best[height<=720]", "ext": "mp4",
+                         "filesize": 0, "format_note": "HD 720p",
+                         "resolution": "720p", "acodec": "aac", "vcodec": "h264"},
+                    ],
+                }
+    except Exception as e:
+        logger.error("get_video_info fallo: %s", e)
+
+    return None
+
+
+def _build_ydl_opts(extra_opts=None, for_download=True):
+    """Construye opciones para yt-dlp, incluyendo cookies si existen."""
     opts = {
         "quiet": True,
         "no_warnings": True,
         "extractor_retries": 3,
         "retries": 5,
         "fragment_retries": 5,
-        "ignoreerrors": False,
-        "http_headers": {
-            "User-Agent": _USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "es,en;q=0.9",
-        },
+        "http_headers": _HEADERS,
     }
-    if _EXTRACTOR_ARGS[extractor_args_idx]:
-        opts["extractor_args"] = _EXTRACTOR_ARGS[extractor_args_idx]
+
+    if for_download:
+        opts["extractor_args"] = {"youtube": "player_client=android"}
+
+    # Usar cookies si existen
+    if os.path.isfile(COOKIES_FILE):
+        opts["cookiefile"] = COOKIES_FILE
+        logger.info("Usando cookies de %s", COOKIES_FILE)
+
     if extra_opts:
         opts.update(extra_opts)
     return opts
 
 
-def get_video_info(url):
-    """Obtiene informacion de un video de YouTube.
-    Prueba multiples estrategias si alguna falla."""
-    
-    last_error = None
-    
-    # Intentar con cada estrategia
-    for idx in range(len(_EXTRACTOR_ARGS)):
-        try:
-            opts = _build_opts(extractor_args_idx=idx)
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if not info:
-                    continue
-                formats = []
-                for f in info.get("formats", []):
-                    if f.get("vcodec") != "none" or f.get("acodec") != "none":
-                        formats.append({
-                            "format_id": f.get("format_id"),
-                            "ext": f.get("ext"),
-                            "filesize": f.get("filesize") or f.get("filesize_approx", 0),
-                            "format_note": f.get("format_note", ""),
-                            "acodec": f.get("acodec", "none"),
-                            "vcodec": f.get("vcodec", "none"),
-                            "resolution": f.get("resolution", ""),
-                        })
-                return {
-                    "title": info.get("title", "Video"),
-                    "duration": info.get("duration", 0),
-                    "formats": formats,
-                }
-        except Exception as e:
-            last_error = str(e)
-            logger.warning("Estrategia %d fallo para %s: %s", idx, url, last_error)
-            continue
-    
-    logger.error("Todas las estrategias fallaron para %s: %s", url, last_error)
-    return None
-
-
 def download_video(url, format_id="best"):
     """Descarga un video de YouTube."""
-    opts = _build_opts(
+    opts = _build_ydl_opts(
         extra_opts={
             **YT_DLP_OPTIONS,
             "format": format_id,
             "max_filesize": 48 * 1024 * 1024,
-        },
-        extractor_args_idx=1,  # Usar web+android para descarga
+        }
     )
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -117,8 +178,8 @@ def download_video(url, format_id="best"):
 
 
 def download_audio(url):
-    """Descarga solo el audio (MP3) de un video de YouTube."""
-    opts = _build_opts(
+    """Descarga solo el audio (MP3)."""
+    opts = _build_ydl_opts(
         extra_opts={
             **YT_DLP_OPTIONS,
             "format": "bestaudio/best",
@@ -129,8 +190,7 @@ def download_audio(url):
                     "preferredquality": "192",
                 }
             ],
-        },
-        extractor_args_idx=1,
+        }
     )
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
