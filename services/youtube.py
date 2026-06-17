@@ -69,50 +69,46 @@ def _run_ytdlp(args):
 
 def download_video(url, format_id="best"):
     """Descarga un video probando diferentes formatos."""
-    # Mapear format_id a formatos reales de yt-dlp
-    format_map = {
-        "best": ["best", "bestvideo+bestaudio/best"],
-        "best[height<=720]": ["best[height<=720]", "bestvideo[height<=720]+bestaudio/best[height<=720]", "best"],
-        "worst": ["worst", "best"],
-    }
-    formatos = format_map.get(format_id, ["best"])
-
     outtmpl = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
 
-    # Estrategias: probamos diferentes configuraciones
-    configs = [
-        {"extractor_args": "youtube:player_client=android"},
-        {"extractor_args": "youtube:player_client=web"},
-        {},  # Sin extractor-args
-    ]
+    # Probamos formatos de mas especifico a mas generico
+    # sin extractor-args (a veces con extractor-args cambian los IDs)
+    formatos_probar = ["best", "bestvideo+bestaudio", "18"]
 
-    for config in configs:
-        for fmt in formatos:
-            args = [
-                "--format", fmt,
-                "--max-filesize", "300M",
-                "--output", outtmpl,
-                "--restrict-filenames",
-                "--merge-output-format", "mp4",
-                "--retries", "5",
-                "--fragment-retries", "5",
-            ]
-            if config.get("extractor_args"):
-                args.extend(["--extractor-args", config["extractor_args"]])
-            args.append(url)
+    if format_id == "best[height<=720]":
+        formatos_probar = [
+            "best[height<=720]",
+            "bestvideo[height<=720]+bestaudio",
+            "bestvideo+bestaudio",
+            "best",
+            "18",
+        ]
+    elif format_id == "worst":
+        formatos_probar = ["worst", "18", "best"]
 
-            ok, err = _run_ytdlp(args)
-            if ok:
-                for f in os.listdir(DOWNLOAD_DIR):
-                    if not f.startswith("._"):
-                        fpath = os.path.join(DOWNLOAD_DIR, f)
-                        if os.path.isfile(fpath) and os.path.getsize(fpath) > 1024:
-                            logger.info("Descargado: %s (%d MB)", fpath, os.path.getsize(fpath) // 1024 // 1024)
-                            return fpath
-            elif "Requested format" in err:
-                continue
-            else:
-                break  # Error diferente, no seguir con esta config
+    for fmt in formatos_probar:
+        args = [
+            "--format", fmt,
+            "--max-filesize", "300M",
+            "--output", outtmpl,
+            "--restrict-filenames",
+            "--merge-output-format", "mp4",
+            "--retries", "5",
+            "--fragment-retries", "5",
+            url,
+        ]
+        ok, err = _run_ytdlp(args)
+        if ok:
+            for f in os.listdir(DOWNLOAD_DIR):
+                if not f.startswith("._"):
+                    fpath = os.path.join(DOWNLOAD_DIR, f)
+                    if os.path.isfile(fpath) and os.path.getsize(fpath) > 1024:
+                        logger.info("Descargado: %s (%d MB)", fpath, os.path.getsize(fpath) // 1024 // 1024)
+                        return fpath
+        elif "Requested format" in err:
+            continue
+        else:
+            break
 
     logger.error("Todos los intentos fallaron para %s", url)
     return None
