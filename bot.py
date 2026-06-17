@@ -106,6 +106,8 @@ def main() -> None:
         app.add_handler(CommandHandler("help", help_command))
         app.add_handler(CommandHandler("cookies", cookies_command))
         app.add_handler(conv_handler)
+        # Handler para archivos .txt (cookies enviadas sin /cookies)
+        app.add_handler(MessageHandler(filters.Document.ALL, cookies_command))
 
         # Iniciar bot
         logger.info("Bot conectandose a Telegram...")
