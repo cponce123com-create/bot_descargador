@@ -67,8 +67,7 @@ def _crop_vertical(path):
 def download_video(url, format_id="360"):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     if format_id=="vertical":
-        # Descargar mejor calidad para cropear
-        f = ["best","bestvideo+bestaudio","best[ext=mp4]","18"]
+        f = ["best[height<=360]","bestvideo[height<=360]+bestaudio","worst","18","best"]
     else:
         f = ["best[height<=360]","bestvideo[height<=360]+bestaudio","worst","18","best"]
     last = ""
