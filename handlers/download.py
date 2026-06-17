@@ -15,11 +15,12 @@ TT_RE = re.compile(r"(https?://)?(www\.)?(vm\.tiktok\.com|tiktok\.com)/", re.IGN
 
 
 def _error_msg(error):
-    if "YOUTUBE_BLOCK" in error: return "❌ YouTube bloquea la IP de Render. Necesitas cookies validas. Usa /cookies"
+    if "ENV_ERROR" in error: return "❌ Error temporal del servidor. Intenta mas tarde."
+    if "YOUTUBE_BLOCK" in error: return "❌ YouTube bloquea la IP de Render. Usa /cookies para enviar cookies validas."
     if "VIDEO_PRIVADO" in error: return "❌ Este video es privado."
     if "VIDEO_NO_DISPONIBLE" in error: return "❌ Video no disponible (eliminado o restringido)."
-    if "FORMATO_NO_DISPONIBLE" in error: return "❌ Formato no disponible para este video. Prueba otro."
-    if "ARCHIVO_MUY_GRANDE" in error: return "❌ El video excede 300MB. Prueba con audio o menor calidad."
+    if "FORMATO_NO_DISPONIBLE" in error: return "❌ Formato no disponible para este video."
+    if "ARCHIVO_MUY_GRANDE" in error: return "❌ El video excede 300MB. Prueba con audio."
     return "❌ Error: " + error[:100]
 
 
@@ -89,8 +90,7 @@ async def format_callback(update, context):
     if choice == "yt_audio": path, error = download_audio(url)
     else: path, error = download_video(url, fmt_map.get(choice, "best"))
     if not path:
-        msg = _error_msg(error)
-        await q.edit_message_text(msg)
+        await q.edit_message_text(_error_msg(error))
         return ConversationHandler.END
     if os.path.getsize(path) > MAX_FILE_SIZE:
         cleanup(path); await q.edit_message_text("❌ Archivo >300MB.")

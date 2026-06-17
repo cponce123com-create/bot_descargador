@@ -42,16 +42,37 @@ def _run_ytdlp(args):
         logger.error("EXC yt-dlp: %s", e)
         return False, "", str(e)
 
+# Detecta errores de entorno (sin runtime JS) vs cookies invalidas
+def _is_env_error(stderr):
+    """Retorna True si el error es de entorno/runtime, no de cookies."""
+    env_markers = [
+        "No video formats found",
+        "No supported JavaScript runtime",
+        "Could not install JavaScript runtime",
+        "deno", "bun", "node",  # si menciona runtimes es probablemente error de entorno
+    ]
+    return any(m in stderr.lower() for m in [x.lower() for x in env_markers])
+
 def validate_cookies():
     if not os.path.isfile(COOKIES_FILE): return False, "No hay cookies.txt"
     cmd = [YT_DLP, "--cookies", COOKIES_FILE, "--no-warnings", "--quiet", "--simulate", "--print", "title", "--format", "best", "--playlist-end", "1", "https://www.youtube.com/watch?v=jNQXAC9IVRw"]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if "Sign in to confirm" in r.stderr: return False, "YOUTUBE_BLOCK"
-    if r.returncode == 0 and r.stdout.strip(): return True, "Cookies OK"
-    return False, r.stderr[:200] if r.stderr else "Error"
+    stderr = r.stderr.strip()
+    if _is_env_error(stderr):
+        logger.error("ERROR DE ENTORNO: yt-dlp no tiene runtime JS. Falta Deno o yt-dlp-ejs.")
+        return False, "ENV_ERROR: Falta runtime JavaScript (Deno). Error del servidor."
+    if "Sign in to confirm" in stderr:
+        return False, "YOUTUBE_BLOCK"
+    if r.returncode == 0 and r.stdout.strip():
+        logger.info("Cookies validadas OK")
+        return True, "Cookies OK"
+    return False, stderr[:200] if stderr else "Error"
 
 def _get_direct_url(url, fmt):
     ok, out, err = _run_ytdlp(["--quiet", "--simulate", "--print", "url", "--format", fmt, url])
+    if _is_env_error(err):
+        logger.error("ERROR DE ENTORNO en _get_direct_url: %s", err[:300])
+        return False, "", "ENV_ERROR: Error del servidor. Reintenta mas tarde."
     if ok and out:
         for line in out.split(chr(10)):
             if line.startswith("http"): return True, line, ""
@@ -82,13 +103,13 @@ def download_video(url, format_id="best"):
     last = ""
     for fmt in specs.get(format_id, ["best", "18"]):
         logger.info("Formato: %s", fmt)
-        ok, url, err = _get_direct_url(url, fmt)
+        ok, url_url, err = _get_direct_url(url, fmt)
         if not ok:
             last = err
-            if any(x in err for x in ["YOUTUBE_BLOCK", "PRIVADO", "NO_DISPONIBLE"]): return None, err
+            if any(x in err for x in ["YOUTUBE_BLOCK", "PRIVADO", "NO_DISPONIBLE", "ENV_ERROR"]): return None, err
             continue
         path = os.path.join(DOWNLOAD_DIR, "yt_video.mp4")
-        ok, err = _download_url(url, path)
+        ok, err = _download_url(url_url, path)
         if ok:
             s = os.path.getsize(path) // 1024 // 1024
             logger.info("OK: %s (%d MB)", path, s)
