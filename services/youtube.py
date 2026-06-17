@@ -1,6 +1,7 @@
 """
 Servicio de descarga de YouTube.
-Usa subprocess para ejecutar yt-dlp (evita bugs del binding Python).
+Usa yt-dlp --simulate --print url para obtener URL directa,
+luego descarga con requests (no necesita ffmpeg).
 """
 
 import os
@@ -12,7 +13,8 @@ from config import DOWNLOAD_DIR, HTTP_TIMEOUT
 logger = logging.getLogger(__name__)
 
 COOKIES_FILE = "cookies.txt"
-YT_DLP = "yt-dlp"  # asume que esta en PATH
+YT_DLP = "yt-dlp"
+MAX_SIZE = 300 * 1024 * 1024
 
 
 def _get_oembed_info(url):
@@ -20,7 +22,7 @@ def _get_oembed_info(url):
         resp = requests.get(
             "https://www.youtube.com/oembed",
             params={"url": url, "format": "json"},
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0"},
+            headers={"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"},
             timeout=HTTP_TIMEOUT,
         )
         resp.raise_for_status()
@@ -32,7 +34,6 @@ def _get_oembed_info(url):
 
 
 def get_video_info(url):
-    """Obtiene info via oEmbed API (sin bloqueos)."""
     oembed = _get_oembed_info(url)
     if oembed:
         formats = [
@@ -50,92 +51,123 @@ def get_video_info(url):
     return None
 
 
-def _run_ytdlp(args):
-    """Ejecuta yt-dlp como subprocess. Retorna True si tuvo exito."""
-    cmd = [YT_DLP, "--no-warnings", "--quiet"]
+def _get_direct_url(url, format_spec):
+    """Obtiene URL directa de descarga via yt-dlp --simulate --print url."""
+    cmd = [YT_DLP, "--no-warnings", "--quiet", "--simulate", "--print", "url",
+           "--format", format_spec, url]
     if os.path.isfile(COOKIES_FILE):
-        cmd.extend(["--cookies", COOKIES_FILE])
-        logger.info("Usando cookies via --cookies flag")
-    cmd.extend(args)
-    logger.info("Ejecutando: %s", " ".join(cmd[-8:]))
+        cmd.insert(1, "--cookies")
+        cmd.insert(2, COOKIES_FILE)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
-        stderr = result.stderr.strip()[:300]
-        logger.warning("yt-dlp fallo: %s", stderr)
-        return False, stderr
-    return True, result.stdout
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0 or result.stdout.strip():
+            lines = result.stdout.strip().split(chr(10))
+            return lines[0] if lines else None
+        logger.warning("get_url fallo: %s", result.stderr[:200])
+    except Exception as e:
+        logger.warning("get_url exception: %s", e)
+    return None
+
+
+def _download_from_url(video_url, output_path, expected_size=0):
+    """Descarga un video desde una URL directa."""
+    try:
+        resp = requests.get(video_url, stream=True, timeout=120,
+                           headers={"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"})
+        resp.raise_for_status()
+
+        total = 0
+        with open(output_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    total += len(chunk)
+                    if total > MAX_SIZE:
+                        os.remove(output_path)
+                        logger.warning("Archivo >300MB, cancelado")
+                        return None
+                    f.write(chunk)
+
+        if os.path.isfile(output_path) and os.path.getsize(output_path) > 1024:
+            return output_path
+    except Exception as e:
+        logger.warning("download_url fallo: %s", e)
+        if os.path.isfile(output_path):
+            os.remove(output_path)
+    return None
 
 
 def download_video(url, format_id="best"):
-    """Descarga un video probando diferentes formatos."""
-    outtmpl = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
+    """Descarga un video. Obtiene URL directa con yt-dlp, descarga con requests."""
+    # Mapa de format_id a format_spec de yt-dlp
+    format_specs = {
+        "best": ["best", "bestvideo[height<=1080]+bestaudio", "best[ext=mp4]", "18"],
+        "best[height<=720]": ["best[height<=720]", "bestvideo[height<=720]+bestaudio",
+                             "bestvideo[height<=480]+bestaudio", "best", "18"],
+        "worst": ["worst", "18"],
+    }
 
-    # Probamos formatos de mas especifico a mas generico
-    # sin extractor-args (a veces con extractor-args cambian los IDs)
-    formatos_probar = ["best", "bestvideo+bestaudio", "18"]
+    specs = format_specs.get(format_id, ["best", "18"])
 
-    if format_id == "best[height<=720]":
-        formatos_probar = [
-            "best[height<=720]",
-            "bestvideo[height<=720]+bestaudio",
-            "bestvideo+bestaudio",
-            "best",
-            "18",
-        ]
-    elif format_id == "worst":
-        formatos_probar = ["worst", "18", "best"]
+    for spec in specs:
+        logger.info("Intentando formato: %s", spec)
+        video_url = _get_direct_url(url, spec)
+        if not video_url:
+            continue
 
-    for fmt in formatos_probar:
-        args = [
-            "--format", fmt,
-            "--max-filesize", "300M",
-            "--output", outtmpl,
-            "--restrict-filenames",
-            "--merge-output-format", "mp4",
-            "--retries", "5",
-            "--fragment-retries", "5",
-            url,
-        ]
-        ok, err = _run_ytdlp(args)
-        if ok:
-            for f in os.listdir(DOWNLOAD_DIR):
-                if not f.startswith("._"):
-                    fpath = os.path.join(DOWNLOAD_DIR, f)
-                    if os.path.isfile(fpath) and os.path.getsize(fpath) > 1024:
-                        logger.info("Descargado: %s (%d MB)", fpath, os.path.getsize(fpath) // 1024 // 1024)
-                        return fpath
-        else:
-            # Solo continuar si es error de formato
-            if "Requested format" in err or "not available" in err:
-                logger.info("Formato %s no disponible, probando siguiente", fmt)
-                continue
-            else:
-                logger.warning("Error diferente para formato %s: %s", fmt, err)
-                continue  # No romper, probar siguiente
+        if not video_url.startswith("http"):
+            continue
+
+        # Determinar extension
+        ext = "mp4"
+        if "mime=audio" in video_url or "audio" in spec.lower():
+            ext = "mp3"
+
+        outpath = os.path.join(DOWNLOAD_DIR, f"yt_video.{ext}")
+        result = _download_from_url(video_url, outpath)
+        if result:
+            size = os.path.getsize(result)
+            logger.info("Descargado: %s (%d MB)", result, size // 1024 // 1024)
+            return result
 
     logger.error("Todos los intentos fallaron para %s", url)
     return None
 
 
 def download_audio(url):
-    """Descarga solo audio MP3."""
-    outtmpl = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
-    args = [
-        "--format", "bestaudio/best",
-        "--max-filesize", "300M",
-        "--output", outtmpl,
-        "--restrict-filenames",
-        "--extract-audio",
-        "--audio-format", "mp3",
-        "--audio-quality", "192K",
-        "--retries", "5",
-        "--fragment-retries", "5",
-        url,
-    ]
-    ok, _ = _run_ytdlp(args)
-    if ok:
-        for f in os.listdir(DOWNLOAD_DIR):
-            if f.endswith(".mp3") and not f.startswith("._"):
-                return os.path.join(DOWNLOAD_DIR, f)
+    """Descarga solo audio usando yt-dlp."""
+    # Obtener URL del audio
+    cmd = [YT_DLP, "--no-warnings", "--quiet", "--simulate", "--print", "url",
+           "--format", "bestaudio/best", url]
+    if os.path.isfile(COOKIES_FILE):
+        cmd.insert(1, "--cookies")
+        cmd.insert(2, COOKIES_FILE)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+
+            lines = result.stdout.strip().split(chr(10))
+            return lines[0] if lines else None
+        outpath = os.path.join(DOWNLOAD_DIR, "yt_audio.mp3")
+
+        resp = requests.get(audio_url, stream=True, timeout=120,
+                           headers={"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"})
+        resp.raise_for_status()
+
+        total = 0
+        with open(outpath, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    total += len(chunk)
+                    if total > MAX_SIZE:
+                        os.remove(outpath)
+                        return None
+                    f.write(chunk)
+
+        if os.path.isfile(outpath) and os.path.getsize(outpath) > 1024:
+            return outpath
+    except Exception as e:
+        logger.warning("download_audio fallo: %s", e)
     return None
