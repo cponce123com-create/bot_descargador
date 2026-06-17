@@ -5,6 +5,7 @@ Punto de entrada principal.
 
 import logging
 import os
+import threading
 
 from telegram import Update
 from telegram.ext import (
@@ -33,6 +34,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def start_http_server():
+    """Servidor HTTP mínimo para health checks de Render."""
+    import http.server
+
+    PORT = int(os.environ.get("PORT", 8080))
+
+    class HealthHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Bot running")
+
+        def log_message(self, format, *args):
+            pass  # Silenciar logs del HTTP server
+
+    server = http.server.HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    logger.info("Health check server listening on port %s", PORT)
+    server.serve_forever()
+
+
 def main() -> None:
     """Inicializa y arranca el bot."""
     if not BOT_TOKEN:
@@ -41,6 +63,10 @@ def main() -> None:
 
     # Crear directorio de descargas si no existe
     os.makedirs("downloads", exist_ok=True)
+
+    # Iniciar servidor HTTP en un hilo separado (para Render)
+    http_thread = threading.Thread(target=start_http_server, daemon=True)
+    http_thread.start()
 
     # Crear la aplicación
     app = Application.builder().token(BOT_TOKEN).build()
@@ -66,7 +92,7 @@ def main() -> None:
 
     # Iniciar bot
     logger.info("Bot iniciado. Token: %s...", BOT_TOKEN[:10])
-    print("🤖 Bot descargador iniciado. Presiona Ctrl+C para detener.")
+    print("🤖 Bot descargador iniciado.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
