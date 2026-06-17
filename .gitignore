@@ -1,0 +1,25 @@
+# Entorno
+.env
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Descargas temporales
+downloads/
+*.mp4
+*.mp3
+*.webm
+!downloads/.gitkeep
+
+# IDX / Nix
+.idx/
+
+# Sistema
+.DS_Store
+Thumbs.db
