@@ -15,8 +15,8 @@ from services.file_utils import cleanup, cleanup_old_files
 
 SELECTING_FORMAT = 1
 
-YOUTUBE_PATTERN = re.compile(r"(https?://)?(www\\.)?(youtube\\.com|youtu\\.be)/", re.IGNORECASE)
-TIKTOK_PATTERN = re.compile(r"(https?://)?(www\\.)?(vm\\.tiktok\\.com|tiktok\\.com)/", re.IGNORECASE)
+YOUTUBE_PATTERN = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
+TIKTOK_PATTERN = re.compile(r"(https?://)?(www\.)?(vm\.tiktok\.com|tiktok\.com)/", re.IGNORECASE)
 
 
 def detect_platform(url):
