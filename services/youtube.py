@@ -63,7 +63,7 @@ def _crop_vertical(path):
         new_w = new_w - (new_w % 2)  # Asegurar par
         if new_w < 2: new_w = 2
         cmd = ["ffmpeg","-y","-nostdin","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}",
-               "-c:v","libx264","-preset","ultrafast","-crf","30","-c:a","aac","-b:a","64k",out]
+               "-c:v","mpeg4","-qscale:v","3","-c:a","aac","-b:a","64k",out]
         logger.info("Cropping %dx%d -> %dx%d (ultrafast)",w,h,new_w,new_h)
         r = subprocess.run(cmd,capture_output=True,text=True,timeout=120)
         if r.returncode==0 and os.path.isfile(out) and os.path.getsize(out)>1024:
