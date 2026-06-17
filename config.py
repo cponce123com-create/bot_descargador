@@ -15,6 +15,9 @@ if not BOT_TOKEN:
 MAX_FILE_SIZE = 300 * 1024 * 1024
 DOWNLOAD_DIR = "downloads"
 
+# Ruta compartida de cookies de YouTube (usada por handlers/start.py y services/youtube.py)
+COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+
 YT_DLP_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
