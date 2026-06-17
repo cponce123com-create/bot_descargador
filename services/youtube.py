@@ -105,10 +105,14 @@ def download_video(url, format_id="best"):
                     if os.path.isfile(fpath) and os.path.getsize(fpath) > 1024:
                         logger.info("Descargado: %s (%d MB)", fpath, os.path.getsize(fpath) // 1024 // 1024)
                         return fpath
-        elif "Requested format" in err:
-            continue
         else:
-            break
+            # Solo continuar si es error de formato
+            if "Requested format" in err or "not available" in err:
+                logger.info("Formato %s no disponible, probando siguiente", fmt)
+                continue
+            else:
+                logger.warning("Error diferente para formato %s: %s", fmt, err)
+                continue  # No romper, probar siguiente
 
     logger.error("Todos los intentos fallaron para %s", url)
     return None
