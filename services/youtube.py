@@ -69,57 +69,50 @@ def _run_ytdlp(args):
 
 def download_video(url, format_id="best"):
     """Descarga un video probando diferentes formatos."""
-    # Probar formatos
-    formatos = [format_id]
-    if format_id == "best[height<=720]":
-        formatos = ["bestvideo[height<=720]+bestaudio/best[height<=720]", "best[height<=720]", "best"]
-    elif format_id == "worst":
-        formatos = ["worst", "best"]
+    # Mapear format_id a formatos reales de yt-dlp
+    format_map = {
+        "best": ["best", "bestvideo+bestaudio/best"],
+        "best[height<=720]": ["best[height<=720]", "bestvideo[height<=720]+bestaudio/best[height<=720]", "best"],
+        "worst": ["worst", "best"],
+    }
+    formatos = format_map.get(format_id, ["best"])
 
     outtmpl = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
 
-    for fmt in formatos:
-        args = [
-            "--format", fmt,
-            "--max-filesize", "300M",
-            "--output", outtmpl,
-            "--restrict-filenames",
-            "--extractor-args", "youtube:player_client=android",
-            "--retries", "5",
-            "--fragment-retries", "5",
-            url,
-        ]
-        ok, err = _run_ytdlp(args)
-        if ok:
-            # Encontrar el archivo descargado
-            for f in os.listdir(DOWNLOAD_DIR):
-                if not f.startswith("._"):
-                    fpath = os.path.join(DOWNLOAD_DIR, f)
-                    if os.path.isfile(fpath) and os.path.getsize(fpath) > 1024:
-                        logger.info("Descargado: %s (%d MB)", fpath, os.path.getsize(fpath) // 1024 // 1024)
-                        return fpath
-        elif "Requested format" in err:
-            continue  # Probar siguiente formato
-        else:
-            break  # Error diferente, no seguir
-
-    # Ultimo intento: sin extractor-args
-    fmt = formatos[0]
-    args = [
-        "--format", fmt,
-        "--max-filesize", "300M",
-        "--output", outtmpl,
-        "--restrict-filenames",
-        "--retries", "5",
-        url,
+    # Estrategias: probamos diferentes configuraciones
+    configs = [
+        {"extractor_args": "youtube:player_client=android"},
+        {"extractor_args": "youtube:player_client=web"},
+        {},  # Sin extractor-args
     ]
-    ok, err = _run_ytdlp(args)
-    if ok:
-        for f in os.listdir(DOWNLOAD_DIR):
-            if not f.startswith("._"):
-                fpath = os.path.join(DOWNLOAD_DIR, f)
-                if os.path.isfile(fpath) and os.path.getsize(fpath) > 1024:
-                    return fpath
+
+    for config in configs:
+        for fmt in formatos:
+            args = [
+                "--format", fmt,
+                "--max-filesize", "300M",
+                "--output", outtmpl,
+                "--restrict-filenames",
+                "--merge-output-format", "mp4",
+                "--retries", "5",
+                "--fragment-retries", "5",
+            ]
+            if config.get("extractor_args"):
+                args.extend(["--extractor-args", config["extractor_args"]])
+            args.append(url)
+
+            ok, err = _run_ytdlp(args)
+            if ok:
+                for f in os.listdir(DOWNLOAD_DIR):
+                    if not f.startswith("._"):
+                        fpath = os.path.join(DOWNLOAD_DIR, f)
+                        if os.path.isfile(fpath) and os.path.getsize(fpath) > 1024:
+                            logger.info("Descargado: %s (%d MB)", fpath, os.path.getsize(fpath) // 1024 // 1024)
+                            return fpath
+            elif "Requested format" in err:
+                continue
+            else:
+                break  # Error diferente, no seguir con esta config
 
     logger.error("Todos los intentos fallaron para %s", url)
     return None
@@ -133,11 +126,11 @@ def download_audio(url):
         "--max-filesize", "300M",
         "--output", outtmpl,
         "--restrict-filenames",
-        "--extractor-args", "youtube:player_client=android",
         "--extract-audio",
         "--audio-format", "mp3",
         "--audio-quality", "192K",
         "--retries", "5",
+        "--fragment-retries", "5",
         url,
     ]
     ok, _ = _run_ytdlp(args)
