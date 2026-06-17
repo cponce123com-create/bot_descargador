@@ -19,7 +19,7 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN
-from handlers.start import start, help_command
+from handlers.start import start, help_command, cookies_command
 from handlers.download import (
     handle_message,
     format_callback,
@@ -104,6 +104,7 @@ def main() -> None:
         # Registrar handlers
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("cookies", cookies_command))
         app.add_handler(conv_handler)
 
         # Iniciar bot
