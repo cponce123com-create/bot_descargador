@@ -3,15 +3,36 @@ Servicio de descarga de YouTube usando yt-dlp.
 """
 
 import os
-from typing import Optional
 import yt_dlp
 from config import DOWNLOAD_DIR, YT_DLP_OPTIONS
+
+# Opciones base con headers realistas para evitar bloqueos de YouTube
+_BASE_OPTS = {
+    "quiet": True,
+    "no_warnings": True,
+    "extractor_retries": 3,
+    "retries": 5,
+    "fragment_retries": 5,
+    "ignoreerrors": False,
+    "http_headers": {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es,en;q=0.9",
+    },
+}
 
 
 def get_video_info(url):
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+        opts = {**_BASE_OPTS}
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            if not info:
+                return None
             return {
                 "title": info.get("title", "Video"),
                 "duration": info.get("duration", 0),
@@ -35,6 +56,7 @@ def get_video_info(url):
 
 def download_video(url, format_id="best"):
     opts = {
+        **_BASE_OPTS,
         **YT_DLP_OPTIONS,
         "format": format_id,
         "max_filesize": 48 * 1024 * 1024,
@@ -56,6 +78,7 @@ def download_video(url, format_id="best"):
 
 def download_audio(url):
     opts = {
+        **_BASE_OPTS,
         **YT_DLP_OPTIONS,
         "format": "bestaudio/best",
         "postprocessors": [
