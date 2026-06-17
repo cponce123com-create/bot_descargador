@@ -2,8 +2,7 @@
 
 import os, subprocess, logging, uuid
 from config import DOWNLOAD_DIR, COOKIES_FILE
-logger = logging.getLogger(__name__)
-YT = "yt-dlp"
+logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist","--playlist-end","1"]
 BASE = ["--no-warnings","--quiet","--no-mtime","--force-overwrites","--max-filesize","300M","--merge-output-format","mp4"]
@@ -34,7 +33,7 @@ def _oembed(url):
 
 def get_video_info(url):
     t = _oembed(url)
-    if t: return {"title":t,"duration":0,"formats":[{"format_id":"360","ext":"mp4","format_note":"Video 360p","resolution":"360p"}]}
+    if t: return {"title":t,"duration":0,"formats":[{"format_id":"360","ext":"mp4","format_note":"Video","resolution":"360p"},{"format_id":"vertical","ext":"mp4","format_note":"Vertical","resolution":"9:16"}]}
     return None
 
 def validate_cookies():
@@ -45,29 +44,57 @@ def validate_cookies():
     if ok and o.strip(): return True,"OK"
     return False,s[:200] or "Error"
 
+def _crop_vertical(path):
+    """Cropea video a formato vertical 9:16 centrado usando ffmpeg."""
+    out = os.path.join(DOWNLOAD_DIR, f"vert_{uuid.uuid4().hex[:8]}.mp4")
+    # Obtener dimensiones
+    r = subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries","stream=width,height","-of","csv=p=0",path],
+                      capture_output=True,text=True,timeout=15)
+    if r.returncode!=0: return None
+    parts = r.stdout.strip().split(",")
+    if len(parts)!=2: return None
+    w, h = int(parts[0]), int(parts[1])
+    # Calcular crop para 9:16 (vertical)
+    new_w = int(h * 9 / 16)
+    if new_w > w: new_w = w; new_h = int(w * 16 / 9); y_off = (h - new_h) // 2; x_off = 0
+    else: new_h = h; x_off = (w - new_w) // 2; y_off = 0
+    cmd = ["ffmpeg","-y","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}","-c:a","copy",out]
+    r = subprocess.run(cmd,capture_output=True,text=True,timeout=120)
+    if r.returncode==0 and os.path.isfile(out) and os.path.getsize(out)>1024:
+        os.remove(path); return out
+    return None
+
 def download_video(url, format_id="360"):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
-    # Solo 360p - formatos priorizando menor peso
-    fmts = ["best[height<=360]","bestvideo[height<=360]+bestaudio","worst","18","best"]
+    if format_id=="vertical":
+        # Descargar mejor calidad para cropear
+        f = ["best","bestvideo+bestaudio","best[ext=mp4]","18"]
+    else:
+        f = ["best[height<=360]","bestvideo[height<=360]+bestaudio","worst","18","best"]
     last = ""
-    for fmt in fmts:
+    for fmt in f:
         o = os.path.join(DOWNLOAD_DIR,f"yt_%(id)s_{uniq}.%(ext)s")
-        ok,stdout,stderr = _run(["--format",fmt,"--output",o] + BASE + SINGLE + [url])
+        ok,sout,serr = _run(["--format",fmt,"--output",o] + BASE + SINGLE + [url])
         if ok:
-            for f in os.listdir(DOWNLOAD_DIR):
-                if uniq in f and os.path.isfile(fp:=os.path.join(DOWNLOAD_DIR,f)) and os.path.getsize(fp)>1024:
-                    sz = os.path.getsize(fp)//1024//1024; logger.info("OK: %s (%d MB)",f,sz); return fp,""
-        last = stderr[:100] or "Error"
-        if "Requested format" not in stderr: continue
+            for fn in os.listdir(DOWNLOAD_DIR):
+                if uniq in fn and os.path.isfile(fp:=os.path.join(DOWNLOAD_DIR,fn)) and os.path.getsize(fp)>1024:
+                    sz = os.path.getsize(fp)//1024//1024; logger.info("Descargado: %s (%d MB)",fn,sz)
+                    if format_id=="vertical":
+                        v = _crop_vertical(fp)
+                        if v: logger.info("Vertical OK: %s",v); return v,""
+                        logger.warning("Crop fallo, enviando original"); return fp,""
+                    return fp,""
+        last = serr[:100] or "Error"
+        if "Requested format" not in serr: continue
         last = "FORMATO_NO_DISPONIBLE"
     return None,last
 
 def download_audio(url):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     o = os.path.join(DOWNLOAD_DIR,f"yt_%(id)s_{uniq}.%(ext)s")
-    ok,stdout,stderr = _run(["--format","bestaudio/best","--extract-audio","--audio-format","mp3","--output",o] + BASE + SINGLE + [url])
+    ok,sout,serr = _run(["--format","bestaudio/best","--extract-audio","--audio-format","mp3","--output",o] + BASE + SINGLE + [url])
     if ok:
-        for f in os.listdir(DOWNLOAD_DIR):
-            if uniq in f and f.endswith(".mp3") and os.path.getsize(fp:=os.path.join(DOWNLOAD_DIR,f))>1024:
+        for fn in os.listdir(DOWNLOAD_DIR):
+            if uniq in fn and fn.endswith(".mp3") and os.path.getsize(fp:=os.path.join(DOWNLOAD_DIR,fn))>1024:
                 return fp,""
-    return None,stderr[:100] or "Error"
+    return None,serr[:100] or "Error"
