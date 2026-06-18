@@ -8,6 +8,7 @@ from services.file_utils import cleanup, cleanup_old_files
 SELECTING_FORMAT = 1
 YT_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
 TT_RE = re.compile(r"(https?://)?(www\.)?(vm\.tiktok\.com|tiktok\.com)/", re.IGNORECASE)
+FB_RE = re.compile(r"(https?://)?(www\.|web\.|m\.)?(facebook\.com|fb\.watch)/", re.IGNORECASE)
 QUAL = {"video":"360p","vertical":"Vertical 9:16","audio":"MP3"}
 
 def _err(e):
@@ -17,13 +18,16 @@ def _err(e):
     return "❌ "+e[:100]
 
 def _cap(url,title,quality,plat):
-    e = "✨📺 YouTube" if plat=="youtube" else "✨📺 TikTok"
+    if plat=="youtube": e = "✨📺 YouTube"
+    elif plat=="tiktok": e = "✨📺 TikTok"
+    else: e = "✨📺 Facebook"
     t = (title[:80]+"...") if title and len(title)>80 else (title or "Video")
     return f"{e}{chr(10)}"+"━"*25+f"{chr(10)}🔗 {url}{chr(10)}📝 {t}{chr(10)}📺 {quality}{chr(10)}📥 ¡Dale en guardar!"
 
 def detect_platform(url):
     if YT_RE.search(url): return "youtube"
     if TT_RE.search(url): return "tiktok"
+    if FB_RE.search(url): return "facebook"
     return None
 
 async def handle_message(up, ctx):
@@ -31,7 +35,8 @@ async def handle_message(up, ctx):
     if not p: await up.message.reply_text("❌ URL no valida."); return ConversationHandler.END
     cleanup_old_files()
     if p=="youtube": return await handle_youtube(up,ctx,t)
-    return await handle_tiktok(up,ctx,t)
+    if p=="tiktok": return await handle_tiktok(up,ctx,t)
+    return await handle_facebook(up,ctx,t)
 
 async def handle_youtube(up, ctx, url):
     from services.youtube import get_video_info
@@ -87,6 +92,41 @@ async def format_callback(up, ctx):
         await q.delete_message()
     except: await q.edit_message_text("❌ Error.")
     finally: cleanup(path)
+    return ConversationHandler.END
+
+async def handle_facebook(up, ctx, url):
+    from services.facebook import get_video_info, download_facebook
+    s = await up.message.reply_text("⏳ Analizando Facebook...")
+    info = await asyncio.to_thread(get_video_info, url)
+    title = info.get("title", "Facebook Video")
+    
+    await s.edit_text("⏳ Descargando video de Facebook...")
+    path, err = await asyncio.to_thread(download_facebook, url)
+    
+    if not path:
+        await s.edit_text(_err(err))
+        return ConversationHandler.END
+        
+    if os.path.getsize(path) > MAX_FILE_SIZE:
+        from services.file_utils import cleanup
+        cleanup(path)
+        await s.edit_text("❌ El archivo es demasiado grande (>300MB).")
+        return ConversationHandler.END
+
+    try:
+        await s.edit_text("📤 Enviando...")
+        with open(path, "rb") as f:
+            await up.message.reply_video(
+                f, 
+                caption=_cap(url, title, "HD", "facebook"),
+                supports_streaming=True
+            )
+        await s.delete()
+    except Exception as e:
+        await s.edit_text(f"❌ Error al enviar: {str(e)[:50]}")
+    finally:
+        from services.file_utils import cleanup
+        cleanup(path)
     return ConversationHandler.END
 
 async def cancel(up, ctx):
