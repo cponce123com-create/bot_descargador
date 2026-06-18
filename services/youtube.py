@@ -211,8 +211,9 @@ def download_playlist_audio(url):
     return result if result else None, "Error"
 
 
-def validate_cookies():
-    if not os.path.isfile(COOKIES_FILE):
+def validate_cookies(cookies_path=None):
+    path = cookies_path or COOKIES_FILE
+    if not os.path.isfile(path):
         return False, "No hay cookies"
     test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
     ok, o, s = _run(["--simulate", "--print", "title", "--format", "best"] + SINGLE + [test_url],

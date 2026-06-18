@@ -60,18 +60,33 @@ async def cookies_command(up, ctx):
     try:
         f = await doc.get_file()
         await f.download_to_drive(tmp_path)
+        # Validate against the temp file by temporarily placing it at COOKIES_FILE
+        if os.path.isfile(COOKIES_FILE):
+            os.rename(COOKIES_FILE, COOKIES_FILE + ".bak")
+            backup_exists = True
+        else:
+            backup_exists = False
+        os.replace(tmp_path, COOKIES_FILE)
         ok, msg = await asyncio.to_thread(validate_cookies)
         if ok:
-            os.replace(tmp_path, COOKIES_FILE)
+            # Remove backup, keep new cookies
+            if backup_exists:
+                try: os.remove(COOKIES_FILE + ".bak")
+                except OSError: pass
             await up.message.reply_text("✅ *Cookies OK.*", parse_mode="Markdown")
         else:
-            # Remove temp file, keep previous cookies intact
-            try: os.remove(tmp_path)
-            except OSError: pass
+            # Restore backup
+            if backup_exists:
+                os.replace(COOKIES_FILE + ".bak", COOKIES_FILE)
+            else:
+                try: os.remove(COOKIES_FILE)
+                except OSError: pass
             err_display = msg[:200]
             await up.message.reply_text(f"❌ Cookies invalidas: {err_display}", parse_mode="Markdown")
     except Exception as e:
         logger.error("Error cookies: %s", e)
-        try: os.remove(tmp_path)
-        except OSError: pass
+        # Cleanup tmp if it exists
+        if os.path.isfile(tmp_path):
+            try: os.remove(tmp_path)
+            except OSError: pass
         await up.message.reply_text("❌ Error al procesar cookies.")
