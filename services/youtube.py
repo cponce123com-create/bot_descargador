@@ -24,14 +24,41 @@ def _cleanup():
             try: os.remove(os.path.join(DOWNLOAD_DIR,f))
             except: pass
 
-def _run(args, timeout=240):
-    cmd = [YT, "--no-check-certificates", "--no-cache-dir"] # Desactivar check de certs y cache para velocidad
+def _run(args, timeout=240, progress_callback=None):
+    cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"]
     if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies",COOKIES_FILE])
     cmd.extend(args)
     try:
-        # Usar Popen para tener más control si fuera necesario, pero run es suficiente con optimizaciones
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode==0, r.stdout.strip(), r.stderr.strip()
+        if not progress_callback:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            return r.returncode==0, r.stdout.strip(), r.stderr.strip()
+        
+        # Con callback para progreso
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout_content = []
+        
+        import re
+        # Regex para capturar el porcentaje: [download]  12.3% of ...
+        progress_re = re.compile(r"\[download\]\s+(\d+\.\d+)%")
+        
+        last_percent = -1
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            if line:
+                stdout_content.append(line)
+                match = progress_re.search(line)
+                if match:
+                    percent = float(match.group(1))
+                    # Solo notificar cambios significativos (cada 10% aprox) para no saturar Telegram
+                    if int(percent) // 10 > last_percent // 10:
+                        last_percent = int(percent)
+                        progress_callback(percent)
+        
+        _, stderr = process.communicate(timeout=timeout)
+        return process.returncode == 0, "".join(stdout_content).strip(), stderr.strip()
+        
     except subprocess.TimeoutExpired: return False,"","TIMEOUT"
     except Exception as e: return False,"",str(e)
 

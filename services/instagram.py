@@ -24,15 +24,9 @@ def _cleanup():
             try: os.remove(os.path.join(DOWNLOAD_DIR,f))
             except: pass
 
-def _run(args, timeout=240):
-    cmd = [YT]
-    if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies",COOKIES_FILE])
-    cmd.extend(args)
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode==0, r.stdout.strip(), r.stderr.strip()
-    except subprocess.TimeoutExpired: return False,"","TIMEOUT"
-    except Exception as e: return False,"",str(e)
+def _run(args, timeout=240, progress_callback=None):
+    from services.youtube import _run as yt_run
+    return yt_run(args, timeout, progress_callback)
 
 def get_instagram_info(url):
     # Intentar obtener info básica
@@ -41,16 +35,22 @@ def get_instagram_info(url):
         return {"title": o or "Instagram Media"}
     return {"title": "Instagram Media"}
 
-def download_instagram(url):
+def download_instagram(url, progress_callback=None):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     o = os.path.join(DOWNLOAD_DIR, f"ig_{uniq}.%(ext)s")
-    
-    # Instagram a veces es caprichoso con los formatos, intentamos 'best'
-    ok, sout, serr = _run(["--format", "best", "--output", o] + BASE + [url])
-    
+    ok, sout, serr = _run(["--format", "best", "--output", o] + BASE + [url], progress_callback=progress_callback)
     if ok:
         for fn in os.listdir(DOWNLOAD_DIR):
             if uniq in fn and os.path.isfile(fp := os.path.join(DOWNLOAD_DIR, fn)) and os.path.getsize(fp) > 1024:
                 return fp, ""
-    
+    return None, serr[:100] or "Error"
+
+def download_instagram_audio(url, progress_callback=None):
+    _cleanup(); uniq = uuid.uuid4().hex[:8]
+    o = os.path.join(DOWNLOAD_DIR, f"ig_audio_{uniq}.%(ext)s")
+    ok, sout, serr = _run(["--format", "bestaudio/best", "--extract-audio", "--audio-format", "mp3", "--output", o] + BASE + [url], progress_callback=progress_callback)
+    if ok:
+        for fn in os.listdir(DOWNLOAD_DIR):
+            if uniq in fn and fn.endswith(".mp3") and os.path.getsize(fp := os.path.join(DOWNLOAD_DIR, fn)) > 1024:
+                return fp, ""
     return None, serr[:100] or "Error"

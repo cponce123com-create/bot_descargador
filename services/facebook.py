@@ -23,15 +23,9 @@ def _cleanup():
             try: os.remove(os.path.join(DOWNLOAD_DIR,f))
             except: pass
 
-def _run(args, timeout=240):
-    cmd = [YT, "--no-check-certificates", "--no-cache-dir"]
-    if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies",COOKIES_FILE])
-    cmd.extend(args)
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode==0, r.stdout.strip(), r.stderr.strip()
-    except subprocess.TimeoutExpired: return False,"","TIMEOUT"
-    except Exception as e: return False,"",str(e)
+def _run(args, timeout=240, progress_callback=None):
+    from services.youtube import _run as yt_run
+    return yt_run(args, timeout, progress_callback)
 
 def get_video_info(url):
     # Intentar obtener info básica usando yt-dlp
@@ -42,18 +36,14 @@ def get_video_info(url):
         return {"title": title}
     return {"title": "Facebook Video"}
 
-def download_facebook(url):
+def download_facebook(url, progress_callback=None):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
-    # Intentar descargar la mejor calidad disponible que sea mp4 o combinable a mp4
     o = os.path.join(DOWNLOAD_DIR, f"fb_{uniq}.%(ext)s")
-    
-    # Facebook a veces requiere formatos específicos o falla con 'best'
-    # Intentamos una estrategia similar a YouTube pero simplificada
     formats = ["bestvideo+bestaudio/best", "best"]
     
     last_err = ""
     for fmt in formats:
-        ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + [url])
+        ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + [url], progress_callback=progress_callback)
         if ok:
             for fn in os.listdir(DOWNLOAD_DIR):
                 if uniq in fn and os.path.isfile(fp := os.path.join(DOWNLOAD_DIR, fn)) and os.path.getsize(fp) > 1024:
@@ -61,3 +51,13 @@ def download_facebook(url):
         last_err = serr[:100] or "Error"
     
     return None, last_err
+
+def download_facebook_audio(url, progress_callback=None):
+    _cleanup(); uniq = uuid.uuid4().hex[:8]
+    o = os.path.join(DOWNLOAD_DIR, f"fb_audio_{uniq}.%(ext)s")
+    ok, sout, serr = _run(["--format", "bestaudio/best", "--extract-audio", "--audio-format", "mp3", "--output", o] + BASE + SINGLE + [url], progress_callback=progress_callback)
+    if ok:
+        for fn in os.listdir(DOWNLOAD_DIR):
+            if uniq in fn and fn.endswith(".mp3") and os.path.getsize(fp := os.path.join(DOWNLOAD_DIR, fn)) > 1024:
+                return fp, ""
+    return None, serr[:100] or "Error"

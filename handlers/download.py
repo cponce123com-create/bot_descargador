@@ -70,7 +70,7 @@ async def handle_youtube(up, ctx, url):
     ctx.user_data["yt_url"]=url; ctx.user_data["yt_title"]=info["title"]
     t = info["title"][:50]+"..." if len(info["title"])>50 else info["title"]
     kb = [[InlineKeyboardButton("🎬 Video",callback_data="yt_video"),InlineKeyboardButton("📱 Vertical",callback_data="yt_vertical")],
-          [InlineKeyboardButton("🎵 Audio",callback_data="yt_audio")]]
+          [InlineKeyboardButton("🎵 Audio",callback_data="yt_audio"), InlineKeyboardButton("🎞 GIF", callback_data="yt_gif")]]
     
     if YT_PL_RE.search(url):
         kb.append([InlineKeyboardButton("🎼 Playlist (Top 10 MP3)", callback_data="yt_playlist")])
@@ -110,7 +110,15 @@ async def format_callback(up, ctx):
     c = q.data; url = ctx.user_data.get("yt_url"); title = ctx.user_data.get("yt_title","")
     if c=="yt_cancel": await q.edit_message_text("✅ Cancelado."); return ConversationHandler.END
     if not url: await q.edit_message_text("❌ URL perdida."); return ConversationHandler.END
-    await q.edit_message_text("⏳ Descargando...")
+    msg = await q.edit_message_text("⏳ Iniciando...")
+    
+    def progress_bar(percent):
+        try:
+            filled = int(percent // 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            asyncio.run_coroutine_threadsafe(msg.edit_text(f"⏳ Procesando: {bar} {percent}%"), asyncio.get_event_loop())
+        except: pass
+
     if c=="yt_playlist":
         from services.youtube import download_playlist_audio
         await q.edit_message_text("⏳ Descargando playlist (máx 10 canciones)...")
@@ -131,8 +139,16 @@ async def format_callback(up, ctx):
         await q.delete_message()
         return ConversationHandler.END
 
-    if c=="yt_audio": path,err = await asyncio.to_thread(download_audio,url)
-    else: path,err = await asyncio.to_thread(download_video,url,("vertical" if c=="yt_vertical" else "360"))
+    trim = ctx.user_data.get("trim")
+    if c=="yt_audio": path,err = await asyncio.to_thread(download_audio, url, progress_callback=progress_bar)
+    elif c=="yt_gif": path,err = await asyncio.to_thread(download_video, url, to_gif=True, progress_callback=progress_bar, 
+                                                       start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+    else: 
+        path,err = await asyncio.to_thread(download_video, url, 
+                                          format_id=("vertical" if c=="yt_vertical" else "360"),
+                                          progress_callback=progress_bar,
+                                          start_time=trim[0] if trim else None,
+                                          end_time=trim[1] if trim else None)
     if not path: await q.edit_message_text(_err(err)); return ConversationHandler.END
     if os.path.getsize(path)>MAX_FILE_SIZE: cleanup(path); await q.edit_message_text("❌ >300MB."); return ConversationHandler.END
     quality = QUAL.get(c,"360p")
@@ -224,8 +240,69 @@ async def handle_generic(up, ctx, url, plat):
     title = info.get("title", "Video")
     thumb = info.get("thumbnail")
     
-    await s.edit_text(f"⏳ Descargando de {plat.capitalize()}...")
-    path, err = await asyncio.to_thread(download_generic, url, plat)
+    # Para plataformas genéricas, ahora ofrecemos Video, Audio o GIF
+    kb = [[InlineKeyboardButton("🎬 Video", callback_data=f"gen_video_{plat}"), 
+           InlineKeyboardButton("🎵 Audio", callback_data=f"gen_audio_{plat}")],
+          [InlineKeyboardButton("🎞 GIF", callback_data=f"gen_gif_{plat}"),
+           InlineKeyboardButton("❌ Cancelar", callback_data="yt_cancel")]]
+    
+    if thumb:
+        await up.message.reply_photo(thumb, caption=f"📹 *{title[:50]}*\nPlataforma: {plat.capitalize()}\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await s.delete()
+    else:
+        await s.edit_text(f"📹 *{title[:50]}*\nSelecciona:", reply_markup=InlineKeyboardMarkup(kb))
+    
+    ctx.user_data["gen_url"] = url
+    ctx.user_data["gen_title"] = title
+    return SELECTING_FORMAT
+
+async def handle_generic_download(up, ctx):
+    from services.generic import download_generic
+    from services.youtube import download_video as yt_download_video # Reusar para GIF
+    q = up.callback_query; await q.answer()
+    c = q.data; url = ctx.user_data.get("gen_url"); title = ctx.user_data.get("gen_title", "Video")
+    
+    msg = await q.edit_message_text("⏳ Iniciando...")
+    def progress_bar(percent):
+        try:
+            filled = int(percent // 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            asyncio.run_coroutine_threadsafe(msg.edit_text(f"⏳ Procesando: {bar} {percent}%"), asyncio.get_event_loop())
+        except: pass
+
+    plat = c.split("_")[-1]
+    trim = ctx.user_data.get("trim")
+    
+    if "_audio_" in c:
+        # Intentar descargar audio de cualquier plataforma
+        from services.youtube import download_audio
+        path, err = await asyncio.to_thread(download_audio, url, progress_callback=progress_bar)
+    elif "_gif_" in c:
+        path, err = await asyncio.to_thread(yt_download_video, url, to_gif=True, progress_callback=progress_bar,
+                                           start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+    else:
+        path, err = await asyncio.to_thread(download_generic, url, plat, progress_callback=progress_bar)
+        
+    if not path:
+        await q.edit_message_text(_err(err))
+        return ConversationHandler.END
+
+    try:
+        await q.edit_message_text("📤 Enviando...")
+        with open(path, "rb") as f:
+            if "_audio_" in c:
+                await q.message.reply_audio(f, caption=_cap(url, title, "MP3", plat))
+            elif "_gif_" in c:
+                await q.message.reply_animation(f, caption=_cap(url, title, "GIF", plat))
+            else:
+                await q.message.reply_video(f, caption=_cap(url, title, "HD", plat), supports_streaming=True)
+        await q.delete_message()
+    except Exception as e:
+        await q.edit_message_text(f"❌ Error: {str(e)[:50]}")
+    finally:
+        from services.file_utils import cleanup
+        cleanup(path)
+    return ConversationHandler.END
     
     if not path:
         await s.edit_text(_err(err))

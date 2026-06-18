@@ -23,6 +23,8 @@ from config import BOT_TOKEN
 from handlers.start import start, help_command, cookies_command
 from handlers.download import (
     handle_message,
+    handle_search,
+    handle_generic_download,
     format_callback,
     cancel,
     SELECTING_FORMAT,
@@ -95,6 +97,7 @@ def main() -> None:
             states={
                 SELECTING_FORMAT: [
                     CallbackQueryHandler(format_callback, pattern=r"^yt_"),
+                    CallbackQueryHandler(handle_generic_download, pattern=r"^gen_"),
                 ],
             },
             fallbacks=[
@@ -106,6 +109,7 @@ def main() -> None:
         # Registrar handlers
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("search", handle_search))
         app.add_handler(CommandHandler("cookies", cookies_command))
         app.add_handler(conv_handler)
         # Handler para archivos .txt (cookies enviadas sin /cookies)
