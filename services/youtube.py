@@ -6,29 +6,19 @@ logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist","--playlist-end","1"]
 
-# EJS (External JavaScript Runtime) flags for YouTube challenge resolution.
-# Deno is installed in the Docker image and yt-dlp-ejs provides the component fetcher.
-# --remote-components ejs:npm allows yt-dlp to fetch JS challenge scripts at runtime.
 EJS_FLAGS = [
     "--js-runtimes", "deno",
     "--remote-components", "ejs:npm",
 ]
 
-# Combine android and web player clients for maximum format availability.
-# Android client returns downloadable formats reliably; web client adds more format IDs.
-# Separated by comma, yt-dlp tries them in order.
 YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android,web"]
 
 BASE = [
-    "--no-warnings",
-    "--quiet",
-    "--no-mtime",
-    "--force-overwrites",
-    "--max-filesize", "300M",
+    "--no-warnings", "--quiet", "--no-mtime",
+    "--force-overwrites", "--max-filesize", "2G",
     "--merge-output-format", "mp4",
-    "--concurrent-fragments", "5",
-    "--buffer-size", "16K",
-    "--no-playlist"
+    "--concurrent-fragments", "5", "--buffer-size", "16K",
+    "--no-playlist",
 ]
 
 
@@ -44,7 +34,6 @@ def _run(args, timeout=240, progress_callback=None):
     cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"]
     if os.path.isfile(COOKIES_FILE):
         cmd.extend(["--cookies", COOKIES_FILE])
-    # Always use EJS + combined player clients for resilience
     cmd.extend(EJS_FLAGS)
     cmd.extend(YT_EXTRACTOR)
     cmd.extend(args)
@@ -112,18 +101,12 @@ def _convert_to_gif(path):
 
 def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None, to_gif=False):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
-    if format_id == "vertical":
-        f = ["bestvideo[height<=480]+bestaudio/best[height<=480]/best"]
-    elif format_id == "360":
-        f = ["bestvideo[height<=360]+bestaudio/best[height<=360]/best"]
-    else:
-        f = ["bestvideo[height<=720]+bestaudio/best[height<=720]/best"]
-    
+    # Robust format selector: prefers mp4 video+m4a audio, falls back gracefully
+    fmt = "bv*[ext=mp4][filesize<2G]+ba[ext=m4a][filesize<2G]/bv*[ext=mp4]+ba[ext=m4a]/best[filesize<2G]/best"
     args = []
     if start_time and end_time:
         args.extend(["--download-sections", f"*{start_time}-{end_time}", "--force-keyframes-at-cuts"])
-        
-    fp, ok = _try_download(uniq, f, args, progress_callback, url)
+    fp, ok = _try_download(uniq, [fmt], args, progress_callback, url)
     if fp:
         if to_gif: return _convert_to_gif(fp), ""
         if format_id == "vertical": return _crop_vertical(fp) or fp, ""
@@ -165,13 +148,6 @@ def download_playlist_audio(url):
 
 
 def validate_cookies():
-    """Check whether the stored cookies.txt is valid for YouTube.
-
-    With EJS and Deno now available in the Docker image, a simulation failure
-    is a real problem (not a false positive caused by missing JS runtime).
-    We therefore reject cookies that fail the simulation unless "Sign in" is
-    the only error (which means they're expired, a different issue).
-    """
     if not os.path.isfile(COOKIES_FILE): return False,"No hay cookies"
     ok,o,s = _run(["--simulate","--print","title","--format","best"]+SINGLE+["https://www.youtube.com/watch?v=jNQXAC9IVRw"],30)
     if "Sign in" in s:

@@ -75,24 +75,73 @@ async def handle_search(up, ctx):
         if i+1 < len(lines): kb.append([InlineKeyboardButton(f"🎬 {lines[i][:40]}", callback_data=f"yt_search_{lines[i+1]}")])
     await s.edit_text("🎯 Resultados:", reply_markup=InlineKeyboardMarkup(kb))
 
+import asyncio
+from telegram.constants import ChatAction
+
+def _extract_url(text):
+    """Find the first video platform URL in arbitrary text (works with forwarded messages)."""
+    for pattern in (YT_RE, TT_RE, FB_RE, IG_RE, X_RE, REDDIT_RE, PINTEREST_RE):
+        m = pattern.search(text)
+        if m:
+            # Extract the full URL matched
+            start = m.start()
+            # Walk backwards to find protocol start
+            url_start = text.rfind("https://", 0, start)
+            if url_start == -1:
+                url_start = text.rfind("http://", 0, start)
+            if url_start == -1:
+                url_start = start
+            # Walk forward to end of URL (space or end)
+            end = start
+            while end < len(text) and text[end] not in (" ", "\n", "\t"):
+                end += 1
+            return text[url_start:end].strip()
+    return None
+
+async def _react(msg, emoji):
+    """Set a reaction emoji on a message (best-effort)."""
+    try:
+        await msg.set_reaction(emoji)
+    except Exception:
+        pass
+
+async def _chat_action(ctx, chat_id, action):
+    """Send a chat action periodically. Returns a stop callback."""
+    import functools
+    try:
+        await ctx.bot.send_chat_action(chat_id, action)
+    except Exception:
+        pass
+
 async def handle_message(up, ctx):
     if not await _require_auth(up): return ConversationHandler.END
-    t = up.message.text.strip(); p = detect_platform(t)
+    # Extract URL from text (works with forwarded messages, captions, etc.)
+    t = up.message.text or up.message.caption or ""
+    if not t.strip():
+        await up.message.reply_text("❌ URL no valida.")
+        return ConversationHandler.END
+    url = _extract_url(t)
+    if not url:
+        await up.message.reply_text("❌ URL no valida.")
+        return ConversationHandler.END
+    p = detect_platform(url)
+    if not p:
+        await up.message.reply_text("❌ URL no valida.")
+        return ConversationHandler.END
     trim_match = re.search(r"(\d{1,2}:\d{2})-(\d{1,2}:\d{2})", t)
     if trim_match:
         ctx.user_data["trim"] = trim_match.groups()
-        t = t.replace(trim_match.group(0), "").strip(); p = detect_platform(t)
-    if not p: await up.message.reply_text("❌ URL no valida."); return ConversationHandler.END
     cleanup_old_files()
-    if p=="youtube": return await handle_youtube(up,ctx,t)
-    if p=="tiktok": return await handle_tiktok(up,ctx,t)
-    if p=="facebook": return await handle_facebook(up,ctx,t)
-    if p=="instagram": return await handle_instagram(up,ctx,t)
-    return await handle_generic(up,ctx,t,p)
+    if p=="youtube": return await handle_youtube(up,ctx,url)
+    if p=="tiktok": return await handle_tiktok(up,ctx,url)
+    if p=="facebook": return await handle_facebook(up,ctx,url)
+    if p=="instagram": return await handle_instagram(up,ctx,url)
+    return await handle_generic(up,ctx,url,p)
 
 async def handle_youtube(up, ctx, url):
     from services.youtube import get_video_info
     from services.generic import get_info as get_generic_info
+    await _react(up.message, "👀")
     s = await up.message.reply_text("⏳ Analizando...")
     info = await asyncio.to_thread(get_video_info, url)
     gen_info = await asyncio.to_thread(get_generic_info, url)
@@ -103,6 +152,7 @@ async def handle_youtube(up, ctx, url):
     if YT_PL_RE.search(url): kb.append([InlineKeyboardButton("🎼 Playlist (Top 10)", callback_data="yt_playlist")])
     kb.append([InlineKeyboardButton("❌ Cancelar",callback_data="yt_cancel")])
     safe_title = _escape_md(info["title"][:50] + "...") if len(info["title"]) > 50 else _escape_md(info["title"])
+    await _react(up.message, "📹")
     if thumb:
         await up.message.reply_photo(thumb, caption=f"📹 *{safe_title}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         await s.delete()
@@ -112,24 +162,50 @@ async def handle_youtube(up, ctx, url):
 
 async def handle_tiktok(up, ctx, url):
     from services.tiktok import download_tiktok_no_watermark
+    await _react(up.message, "🫡")
+    await ctx.bot.send_chat_action(up.effective_chat.id, ChatAction.RECORD_VIDEO)
     s = await up.message.reply_text("⏳ TikTok...")
     path,durl,err = await asyncio.to_thread(download_tiktok_no_watermark,url)
     if durl:
         try:
+            await ctx.bot.send_chat_action(up.effective_chat.id, ChatAction.UPLOAD_VIDEO)
             await up.message.reply_video(durl,caption=_cap(url,"TikTok","HD","tiktok"),supports_streaming=True)
             await s.delete(); cleanup(path) if path else None; return ConversationHandler.END
         except: pass
     if path:
+        await ctx.bot.send_chat_action(up.effective_chat.id, ChatAction.UPLOAD_VIDEO)
         with open(path,"rb") as f: await up.message.reply_video(f,caption=_cap(url,"TikTok","HD","tiktok"),supports_streaming=True)
         await s.delete(); cleanup(path); return ConversationHandler.END
     await s.edit_text("❌ Error."); return ConversationHandler.END
+
+async def _send_or_fallback(chat, path, title, url, quality, plat, is_audio=False, is_gif=False):
+    """Send a file via Telegram, or fall back to filebin.net if too large."""
+    sz = os.path.getsize(path)
+    TELEGRAM_LIMIT = 50 * 1024 * 1024
+    if sz > TELEGRAM_LIMIT:
+        from services.filebin import upload
+        file_url = upload(path)
+        if file_url:
+            return await chat.reply_text(
+                f"📥 *{title}* es muy grande ({sz//1024//1024}MB) para Telegram.{chr(10)}"
+                f"Descarga aqui: {file_url}",
+                disable_web_page_preview=True,
+            )
+    if is_audio:
+        with open(path, "rb") as f:
+            return await chat.reply_audio(f, caption=_cap(url, title, quality, plat))
+    elif is_gif:
+        with open(path, "rb") as f:
+            return await chat.reply_animation(f, caption=_cap(url, title, quality, plat))
+    else:
+        with open(path, "rb") as f:
+            return await chat.reply_video(f, caption=_cap(url, title, quality, plat), supports_streaming=True)
 
 async def format_callback(up, ctx):
     q = up.callback_query
     c = q.data
     await q.answer()
     path = None
-    status_msg = None  # track status message for deletion later
 
     try:
         from services.youtube import download_video, download_audio
@@ -143,14 +219,15 @@ async def format_callback(up, ctx):
             await q.message.reply_text("✅ Cancelado.")
             return ConversationHandler.END
 
-        # Send a NEW status message instead of editing the photo/buttons message
-        status_msg = await q.message.reply_text("⏳ Descargando...")
-        
+        # Use reactions + chat action instead of editing status messages
+        await _react(q.message, "🫡")
+        await ctx.bot.send_chat_action(q.message.chat_id, ChatAction.RECORD_VIDEO)
+
         def progress(p):
             try:
-                bar = "█" * int(p//10) + "░" * (10 - int(p//10))
                 loop = asyncio.get_event_loop()
-                asyncio.run_coroutine_threadsafe(status_msg.edit_text(f"⏳ {bar} {p:.0f}%"), loop)
+                bar = chr(9608) * int(p//10) + chr(9617) * (10 - int(p//10))
+                asyncio.run_coroutine_threadsafe(q.message.reply_text(f"{bar} {p:.0f}%"), loop) if int(p) % 20 == 0 else None
             except: pass
 
         trim = ctx.user_data.get("trim")
@@ -174,20 +251,22 @@ async def format_callback(up, ctx):
                 sem.release()
         
         if path:
-            with open(path,"rb") as f:
-                if c=="yt_audio": await status_msg.reply_audio(f, caption=_cap(url,title,"MP3","youtube"))
-                elif c=="yt_gif": await status_msg.reply_animation(f, caption=_cap(url,title,"GIF","youtube"))
-                else: await status_msg.reply_video(f, caption=_cap(url,title,QUAL.get(c,"HD"),"youtube"), supports_streaming=True)
+            await _react(q.message, "🚀")
+            await ctx.bot.send_chat_action(q.message.chat_id, ChatAction.UPLOAD_VIDEO)
+            await _send_or_fallback(
+                q.message.chat,
+                path, title, url,
+                QUAL.get(c, "HD"), "youtube",
+                is_audio=(c=="yt_audio"),
+                is_gif=(c=="yt_gif"),
+            )
             cleanup(path); path = None
         else:
-            await status_msg.edit_text(_err(err))
+            await q.message.reply_text(_err(err))
     except Exception as e:
         logger.exception("Error en format_callback")
         try:
-            if status_msg:
-                await status_msg.edit_text("❌ Error. Reintenta.")
-            else:
-                await q.message.reply_text("❌ Error. Reintenta.")
+            await q.message.reply_text("❌ Error. Reintenta.")
         except Exception:
             pass
     finally:
