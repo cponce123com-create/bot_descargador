@@ -215,7 +215,12 @@ def validate_cookies(cookies_path=None):
     path = cookies_path or COOKIES_FILE
     if not os.path.isfile(path):
         return False, "No hay cookies"
-    test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    sz = os.path.getsize(path)
+    if sz < 50:
+        logger.warning("Cookies file too small (%d bytes)", sz)
+        return False, "Archivo demasiado pequeno"
+    logger.debug("Validating cookies at %s (%d bytes)", path, sz)
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     ok, o, s = _run(["--simulate", "--print", "title", "--format", "best"] + SINGLE + [test_url],
                     30, use_ejs=True)
     if "Sign in" in s or "sign in" in s.lower():
@@ -223,12 +228,8 @@ def validate_cookies(cookies_path=None):
             if "ERROR:" in line:
                 return False, "YOUTUBE_BLOCK: " + line[:150]
         return False, "YOUTUBE_BLOCK: " + s[:200]
-    # If exit code is 0 and we got a title, cookies are valid
     if ok and o.strip():
+        logger.info("Cookies validated OK: %s", o.strip()[:60])
         return True, "OK"
-    # Check if stderr has only warnings (not real errors)
-    if ok and not o.strip():
-        # Possibly just warnings, try extracting title differently
-        pass
     logger.error("validate_cookies FAILED with yt-dlp stderr:%s%s", NL, s)
     return False, "ERROR: " + s[:300]
