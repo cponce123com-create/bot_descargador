@@ -41,7 +41,6 @@ async def help_command(up, ctx):
 async def cookies_command(up, ctx):
     from services.youtube import validate_cookies
 
-    # Admin-only check
     if not _is_admin(up):
         await up.message.reply_text("❌ Solo el admin puede cargar cookies.")
         return
@@ -57,15 +56,22 @@ async def cookies_command(up, ctx):
         await up.message.reply_text("❌ Archivo .txt.")
         return
     await up.message.reply_text("⏳ Validando cookies...")
+    tmp_path = COOKIES_FILE + ".tmp"
     try:
-        f = await doc.get_file(); await f.download_to_drive(COOKIES_FILE)
+        f = await doc.get_file()
+        await f.download_to_drive(tmp_path)
         ok, msg = await asyncio.to_thread(validate_cookies)
         if ok:
+            os.replace(tmp_path, COOKIES_FILE)
             await up.message.reply_text("✅ *Cookies OK.*", parse_mode="Markdown")
         else:
-            # Keep the file so user can retry without re-uploading
+            # Remove temp file, keep previous cookies intact
+            try: os.remove(tmp_path)
+            except OSError: pass
             err_display = msg[:200]
             await up.message.reply_text(f"❌ Cookies invalidas: {err_display}", parse_mode="Markdown")
     except Exception as e:
         logger.error("Error cookies: %s", e)
-        await up.message.reply_text("❌ Error.")
+        try: os.remove(tmp_path)
+        except OSError: pass
+        await up.message.reply_text("❌ Error al procesar cookies.")

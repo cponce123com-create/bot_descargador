@@ -1,15 +1,18 @@
 """Generic downloader for X, Pinterest, Reddit, etc. - async-safe via subprocess."""
 
 import os, subprocess, logging, uuid
-from config import DOWNLOAD_DIR, COOKIES_FILE
+from config import DOWNLOAD_DIR, COOKIES_FILE, MAX_FILE_SIZE
 logger = logging.getLogger(__name__); YT = "yt-dlp"
+# --max-filesize must match the post-download check in download.py (MAX_FILE_SIZE).
+# This avoids downloading data that will be discarded anyway.
+_MF = f"{MAX_FILE_SIZE // 1024 // 1024}M"
 
 BASE = [
     "--no-warnings",
     "--quiet",
     "--no-mtime",
     "--force-overwrites",
-    "--max-filesize", "300M",
+    "--max-filesize", _MF,
     "--merge-output-format", "mp4",
     "--concurrent-fragments", "5",
     "--buffer-size", "16K",
@@ -22,7 +25,7 @@ def _cleanup():
     for f in os.listdir(DOWNLOAD_DIR):
         if f.endswith(".part") or f.endswith(".ytdl"):
             try: os.remove(os.path.join(DOWNLOAD_DIR,f))
-            except: pass
+            except OSError: pass
 
 def _run(args, timeout=240):
     cmd = [YT]

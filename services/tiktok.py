@@ -17,6 +17,7 @@ def download_tiktok_no_watermark(url):
     Retorna (filepath: str|None, direct_url: str|None, error: str|None).
     El handler debe intentar direct_url primero, y si falla, usar filepath.
     """
+    CHUNK_SIZE = 256 * 1024
     try:
         api_url = "https://www.tikwm.com/api/"
         headers = {
@@ -53,11 +54,14 @@ def download_tiktok_no_watermark(url):
             video_url,
             headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14)"},
             timeout=DOWNLOAD_TIMEOUT,
+            stream=True,
         )
         video_resp.raise_for_status()
 
         with open(filepath, "wb") as f:
-            f.write(video_resp.content)
+            for chunk in video_resp.iter_content(chunk_size=CHUNK_SIZE):
+                if chunk:
+                    f.write(chunk)
 
         if os.path.isfile(filepath) and os.path.getsize(filepath) > 1024:
             # Devolver tambien la URL directa para que el handler intente envio directo
@@ -67,7 +71,8 @@ def download_tiktok_no_watermark(url):
         fp = _fallback_download(url)
         return fp, video_url, None if fp else "error"
 
-    except Exception:
+    except Exception as e:
+        logger.warning("TikTok download failed: %s", e)
         fp = _fallback_download(url)
         return fp, None, None if fp else "error"
 
@@ -85,6 +90,6 @@ def _fallback_download(url):
             filename = ydl.prepare_filename(info)
             if os.path.isfile(filename):
                 return filename
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("TikTok fallback download failed: %s", e)
     return None
