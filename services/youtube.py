@@ -1,7 +1,8 @@
 """YouTube downloader - async-safe via subprocess."""
 
-import os, json, subprocess, logging, uuid, re
+import os, json, subprocess, logging, uuid, re, time
 from config import DOWNLOAD_DIR, COOKIES_FILE
+_HTTP_PROXY = os.getenv("HTTP_PROXY") or os.getenv("http_proxy") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
 logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist", "--playlist-end", "1"]
@@ -55,6 +56,8 @@ def _read_info(info_path: str) -> dict:
 def _run(args, timeout=240, progress_callback=None, use_ejs=True, client_idx=0):
     cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress",
            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"]
+    if _HTTP_PROXY:
+        cmd.extend(["--proxy", _HTTP_PROXY])
     if os.path.isfile(COOKIES_FILE):
         cmd.extend(["--cookies", COOKIES_FILE])
     if use_ejs:
@@ -190,9 +193,10 @@ def _try_download(uniq, formats, extra, progress_callback, url):
                     info_path = fp.rsplit(".", 1)[0] + ".info.json"
                     meta = _read_info(info_path) if os.path.isfile(info_path) else {}
                     return fp, meta
-            # If blocked by sign-in, try next client
+            # If blocked by sign-in, try next client after a brief pause
             if "Sign in" in serr or "sign in" in serr.lower():
                 logger.info("Client strategy %d blocked, trying next...", client_idx)
+                time.sleep(3)  # brief pause between client retries
                 continue
             # Real error (not sign-in), stop retrying
             logger.error("yt-dlp format '%s' client %d FAILED. stderr:%s%s",
