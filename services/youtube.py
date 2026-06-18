@@ -7,7 +7,8 @@ logger = logging.getLogger(__name__); YT = "yt-dlp"
 SINGLE = ["--no-playlist", "--playlist-end", "1"]
 
 EJS_FLAGS = [
-    "--js-runtimes", "node,deno",
+    "--js-runtimes", "node",
+    "--js-runtimes", "deno",
     "--remote-components", "ejs:npm",
 ]
 
