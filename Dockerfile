@@ -4,8 +4,10 @@
 
 # Stage 1: download yt-dlp binary
 FROM docker.io/library/alpine:latest AS yt-dlp-bin
-ARG YT_DLP_VERSION="2026.6.9"
-RUN wget -O /bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}/yt-dlp" && chmod +x /bin/yt-dlp
+ARG YT_DLP_VERSION="2026.06.09"
+# Use the glibc-linked binary (yt-dlp_linux) since the python:slim runtime uses glibc.
+# For musl-based runtimes (alpine), use yt-dlp_musllinux instead.
+RUN wget -O /bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}/yt-dlp_linux" && chmod +x /bin/yt-dlp
 
 # Stage 2: download FFmpeg from yt-dlp's official builds
 FROM docker.io/library/alpine:latest AS ffmpeg-bin
