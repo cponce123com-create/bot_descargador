@@ -18,6 +18,7 @@ from telegram.ext import (
     PicklePersistence,
     filters,
 )
+from telegram.ext._basepersistence import PersistenceInput
 
 from config import BOT_TOKEN
 from handlers.start import start, help_command, cookies_command
@@ -96,11 +97,10 @@ def main() -> None:
         )
 
         # Persistencia para mantener estado entre reinicios
+        store_input = PersistenceInput(user_data=True, chat_data=True, bot_data=False)
         persistence = PicklePersistence(
             filepath="bot_data.pkl",
-            store_user_data=True,
-            store_chat_data=True,
-            store_bot_data=False,
+            store_data=store_input,
         )
 
         logger.info("Inicializando bot...")
