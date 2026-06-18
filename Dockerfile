@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN yt-dlp --version && python -c "import yt_dlp_ejs; print('yt-dlp-ejs', yt_dlp_ejs.__version__)" && deno eval "console.log('Deno OK')"
+RUN yt-dlp --version && python -c "import yt_dlp_ejs; print('yt-dlp-ejs:', yt_dlp_ejs._version)" && deno eval "console.log('Deno OK')"
 
 COPY . .
 
