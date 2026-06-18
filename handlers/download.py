@@ -29,11 +29,9 @@ X_RE = re.compile(r"(https?://)?(www\.|x\.|twitter\.)?(com)/(.*)/status/", re.IG
 REDDIT_RE = re.compile(r"(https?://)?(www\.)?(reddit\.com|v\.redd\.it)/", re.IGNORECASE)
 PINTEREST_RE = re.compile(r"(https?://)?(www\.|id\.|pin\.)?(pinterest\.com|pin\.it)/", re.IGNORECASE)
 
-QUAL = {"video":"360p","vertical":"Vertical 9:16","audio":"MP3", "gif": "GIF"}
+QUAL = {"video":"360p","vertical":"Vertical 9:16","audio":"MP3"}
 
 def _escape_md(text):
-    """Escape MarkdownV1 special characters so user-provided text
-    (titles with _, *, [, ], etc.) doesn't break parse_mode formatting."""
     if not text:
         return text
     for ch in ("_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"):
@@ -75,23 +73,18 @@ async def handle_search(up, ctx):
         if i+1 < len(lines): kb.append([InlineKeyboardButton(f"🎬 {lines[i][:40]}", callback_data=f"yt_search_{lines[i+1]}")])
     await s.edit_text("🎯 Resultados:", reply_markup=InlineKeyboardMarkup(kb))
 
-import asyncio
 from telegram.constants import ChatAction
 
 def _extract_url(text):
-    """Find the first video platform URL in arbitrary text (works with forwarded messages)."""
     for pattern in (YT_RE, TT_RE, FB_RE, IG_RE, X_RE, REDDIT_RE, PINTEREST_RE):
         m = pattern.search(text)
         if m:
-            # Extract the full URL matched
             start = m.start()
-            # Walk backwards to find protocol start
             url_start = text.rfind("https://", 0, start)
             if url_start == -1:
                 url_start = text.rfind("http://", 0, start)
             if url_start == -1:
                 url_start = start
-            # Walk forward to end of URL (space or end)
             end = start
             while end < len(text) and text[end] not in (" ", "\n", "\t"):
                 end += 1
@@ -99,23 +92,13 @@ def _extract_url(text):
     return None
 
 async def _react(msg, emoji):
-    """Set a reaction emoji on a message (best-effort)."""
     try:
         await msg.set_reaction(emoji)
     except Exception:
         pass
 
-async def _chat_action(ctx, chat_id, action):
-    """Send a chat action periodically. Returns a stop callback."""
-    import functools
-    try:
-        await ctx.bot.send_chat_action(chat_id, action)
-    except Exception:
-        pass
-
 async def handle_message(up, ctx):
     if not await _require_auth(up): return ConversationHandler.END
-    # Extract URL from text (works with forwarded messages, captions, etc.)
     t = up.message.text or up.message.caption or ""
     if not t.strip():
         await up.message.reply_text("❌ URL no valida.")
@@ -148,7 +131,7 @@ async def handle_youtube(up, ctx, url):
     thumb = gen_info.get("thumbnail")
     ctx.user_data["yt_url"]=url; ctx.user_data["yt_title"]=info["title"]
     kb = [[InlineKeyboardButton("🎬 Video",callback_data="yt_video"),InlineKeyboardButton("📱 Vertical",callback_data="yt_vertical")],
-          [InlineKeyboardButton("🎵 Audio",callback_data="yt_audio"), InlineKeyboardButton("🎞 GIF", callback_data="yt_gif")]]
+          [InlineKeyboardButton("🎵 Audio",callback_data="yt_audio")]]
     if YT_PL_RE.search(url): kb.append([InlineKeyboardButton("🎼 Playlist (Top 10)", callback_data="yt_playlist")])
     kb.append([InlineKeyboardButton("❌ Cancelar",callback_data="yt_cancel")])
     safe_title = _escape_md(info["title"][:50] + "...") if len(info["title"]) > 50 else _escape_md(info["title"])
@@ -178,7 +161,7 @@ async def handle_tiktok(up, ctx, url):
         await s.delete(); cleanup(path); return ConversationHandler.END
     await s.edit_text("❌ Error."); return ConversationHandler.END
 
-async def _send_or_fallback(chat, path, title, url, quality, plat, is_audio=False, is_gif=False):
+async def _send_or_fallback(chat, path, title, url, quality, plat, is_audio=False):
     """Send a file via Telegram, or fall back to filebin.net if too large."""
     sz = os.path.getsize(path)
     TELEGRAM_LIMIT = 50 * 1024 * 1024
@@ -194,9 +177,6 @@ async def _send_or_fallback(chat, path, title, url, quality, plat, is_audio=Fals
     if is_audio:
         with open(path, "rb") as f:
             return await chat.send_audio(f, caption=_cap(url, title, quality, plat))
-    elif is_gif:
-        with open(path, "rb") as f:
-            return await chat.send_animation(f, caption=_cap(url, title, quality, plat))
     else:
         with open(path, "rb") as f:
             return await chat.send_video(f, caption=_cap(url, title, quality, plat), supports_streaming=True)
@@ -244,7 +224,6 @@ async def format_callback(up, ctx):
                         cleanup(p)
                     return ConversationHandler.END
             elif c=="yt_audio": path, err = await asyncio.to_thread(download_audio, url, progress)
-            elif c=="yt_gif": path, err, meta = await asyncio.to_thread(download_video, url, progress_callback=progress, to_gif=True, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
             else: path, err, meta = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
         finally:
             if sem:
@@ -259,7 +238,6 @@ async def format_callback(up, ctx):
                 path, title, url,
                 quality, "youtube",
                 is_audio=(c=="yt_audio"),
-                is_gif=(c=="yt_gif"),
             )
             cleanup(path); path = None
         else:
@@ -288,7 +266,7 @@ async def handle_generic(up, ctx, url, plat):
     info = await asyncio.to_thread(get_info, url)
     ctx.user_data["gen_url"] = url; ctx.user_data["gen_title"] = info["title"]
     kb = [[InlineKeyboardButton("🎬 Video", callback_data=f"gen_video_{plat}"), InlineKeyboardButton("🎵 Audio", callback_data=f"gen_audio_{plat}")],
-          [InlineKeyboardButton("🎞 GIF", callback_data=f"gen_gif_{plat}"), InlineKeyboardButton("❌ Cancelar", callback_data="yt_cancel")]]
+          [InlineKeyboardButton("❌ Cancelar", callback_data="yt_cancel")]]
     safe_title = _escape_md(info["title"][:50] + "...") if len(info["title"]) > 50 else _escape_md(info["title"])
     if info.get("thumbnail"):
         await up.message.reply_photo(info["thumbnail"], caption=f"📹 *{safe_title}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -303,7 +281,6 @@ async def handle_generic_download(up, ctx):
         q = up.callback_query; await q.answer(); c = q.data
         url = ctx.user_data.get("gen_url"); title = ctx.user_data.get("gen_title", "Video")
         plat = c.split("_")[-1]
-        # Send new status message (photo-safe)
         status = await q.message.reply_text("⏳ Descargando...")
         def progress(p):
             try:
@@ -312,13 +289,11 @@ async def handle_generic_download(up, ctx):
             except: pass
 
         trim = ctx.user_data.get("trim")
-        # Acquire global semaphore to cap concurrent downloads
         sem = ctx.bot_data.get("download_sem")
         if sem:
             await sem.acquire()
         try:
             if "_audio_" in c: path, err = await asyncio.to_thread(download_audio, url, progress)
-            elif "_gif_" in c: path, err = await asyncio.to_thread(download_video, url, to_gif=True, progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
             else: path, err = await asyncio.to_thread(download_generic, url, plat, progress)
         finally:
             if sem:
@@ -332,7 +307,6 @@ async def handle_generic_download(up, ctx):
                 return ConversationHandler.END
             with open(path, "rb") as f:
                 if "_audio_" in c: await status.reply_audio(f, caption=_cap(url, title, "MP3", plat))
-                elif "_gif_" in c: await status.reply_animation(f, caption=_cap(url, title, "GIF", plat))
                 else: await status.reply_video(f, caption=_cap(url, title, "HD", plat), supports_streaming=True)
             cleanup(path)
         else:

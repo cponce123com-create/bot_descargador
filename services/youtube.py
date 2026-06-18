@@ -129,19 +129,7 @@ def _crop_vertical(path):
     return None
 
 
-def _convert_to_gif(path):
-    try:
-        out = path.rsplit(".", 1)[0] + ".gif"
-        cmd = ["ffmpeg", "-y", "-i", path, "-vf", "fps=10,scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse", out]
-        if subprocess.run(cmd, timeout=60).returncode == 0:
-            os.remove(path);
-            return out
-    except:
-        pass
-    return None
-
-
-def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None, to_gif=False):
+def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None):
     _cleanup();
     uniq = uuid.uuid4().hex[:8]
     fmt = "bv*[ext=mp4][filesize<2G]+ba[ext=m4a][filesize<2G]/bv*[ext=mp4]+ba[ext=m4a]/best[filesize<2G]/best"
@@ -150,9 +138,6 @@ def download_video(url, format_id="360", progress_callback=None, start_time=None
         extra.extend(["--download-sections", f"*{start_time}-{end_time}", "--force-keyframes-at-cuts"])
     fp, meta = _try_download(uniq, [fmt], extra, progress_callback, url)
     if fp:
-        if to_gif:
-            gif = _convert_to_gif(fp)
-            return (gif, "") if gif else (fp, "")
         if format_id == "vertical":
             v = _crop_vertical(fp)
             return (v, "") if v else (fp, "")
