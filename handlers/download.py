@@ -186,20 +186,20 @@ async def _send_or_fallback(chat, path, title, url, quality, plat, is_audio=Fals
         from services.filebin import upload
         file_url = upload(path)
         if file_url:
-            return await chat.reply_text(
+            return await chat.send_message(
                 f"📥 *{title}* es muy grande ({sz//1024//1024}MB) para Telegram.{chr(10)}"
                 f"Descarga aqui: {file_url}",
                 disable_web_page_preview=True,
             )
     if is_audio:
         with open(path, "rb") as f:
-            return await chat.reply_audio(f, caption=_cap(url, title, quality, plat))
+            return await chat.send_audio(f, caption=_cap(url, title, quality, plat))
     elif is_gif:
         with open(path, "rb") as f:
-            return await chat.reply_animation(f, caption=_cap(url, title, quality, plat))
+            return await chat.send_animation(f, caption=_cap(url, title, quality, plat))
     else:
         with open(path, "rb") as f:
-            return await chat.reply_video(f, caption=_cap(url, title, quality, plat), supports_streaming=True)
+            return await chat.send_video(f, caption=_cap(url, title, quality, plat), supports_streaming=True)
 
 async def format_callback(up, ctx):
     q = up.callback_query
