@@ -202,7 +202,7 @@ async def handle_tiktok(up, ctx, url):
     return ConversationHandler.END
 
 
-async def _send_or_fallback(chat, path, title, url, quality, plat, is_audio=False):
+async def _send_or_fallback(bot, chat_id, path, title, url, quality, plat, is_audio=False):
     sz = os.path.getsize(path)
     TELEGRAM_LIMIT = 50 * 1024 * 1024
     if sz > TELEGRAM_LIMIT:
@@ -211,14 +211,15 @@ async def _send_or_fallback(chat, path, title, url, quality, plat, is_audio=Fals
         if file_url:
             msg = ("📥 *" + title + "* es muy grande (" + str(sz // 1024 // 1024) +
                    "MB) para Telegram." + NL + "Descarga aqui: " + file_url)
-            return await chat.send_message(msg, disable_web_page_preview=True)
+            return await bot.send_message(chat_id, msg, disable_web_page_preview=True)
     if is_audio:
         with open(path, "rb") as f:
-            return await chat.send_audio(f, caption=_cap(url, title, quality, plat))
+            return await bot.send_audio(chat_id, f, caption=_cap(url, title, quality, plat),
+                                        write_timeout=120)
     else:
         with open(path, "rb") as f:
-            return await chat.send_video(f, caption=_cap(url, title, quality, plat),
-                                         supports_streaming=True)
+            return await bot.send_video(chat_id, f, caption=_cap(url, title, quality, plat),
+                                        supports_streaming=True, write_timeout=120)
 
 
 async def format_callback(up, ctx):
@@ -286,7 +287,7 @@ async def format_callback(up, ctx):
             await _react(q.message, "🚀")
             await ctx.bot.send_chat_action(q.message.chat_id, ChatAction.UPLOAD_VIDEO)
             quality = meta.get("resolution", QUAL.get(c, "HD"))
-            await _send_or_fallback(q.message.chat, path, title, url, quality, "youtube",
+            await _send_or_fallback(ctx.bot, q.message.chat_id, path, title, url, quality, "youtube",
                                     is_audio=(c == "yt_audio"))
             cleanup(path)
             path = None
