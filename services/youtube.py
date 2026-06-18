@@ -12,7 +12,13 @@ EJS_FLAGS = [
     "--remote-components", "ejs:npm",
 ]
 
-YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android"]
+# Client strategies tried in order. yt-dlp iterates through these when one fails.
+# web: best with valid cookies + EJS, android: lightweight, tv: sometimes works.
+CLIENT_STRATEGIES = [
+    ["--extractor-args", "youtube:player_client=web"],
+    ["--extractor-args", "youtube:player_client=android"],
+    ["--extractor-args", "youtube:player_client=tv"],
+]
 
 BASE = [
     "--no-warnings", "--quiet", "--no-mtime",
@@ -46,14 +52,15 @@ def _read_info(info_path: str) -> dict:
         return {"resolution": "HD", "duration_sec": 0}
 
 
-def _run(args, timeout=240, progress_callback=None, use_ejs=True):
+def _run(args, timeout=240, progress_callback=None, use_ejs=True, client_idx=0):
     cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress",
            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"]
     if os.path.isfile(COOKIES_FILE):
         cmd.extend(["--cookies", COOKIES_FILE])
     if use_ejs:
         cmd.extend(EJS_FLAGS)
-    cmd.extend(YT_EXTRACTOR)
+    if client_idx < len(CLIENT_STRATEGIES):
+        cmd.extend(CLIENT_STRATEGIES[client_idx])
     cmd.extend(args)
     try:
         if not progress_callback:
@@ -84,7 +91,6 @@ def _run(args, timeout=240, progress_callback=None, use_ejs=True):
         return False, "", str(e)
 
 
-# Extract YouTube video ID from various URL formats
 _YT_ID_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?v=|embed/|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})",
     re.IGNORECASE,
@@ -146,8 +152,6 @@ def _crop_vertical(path):
 
 
 FMT_SELECTOR = {
-    # Use pre-merged single-stream formats to avoid YouTube bot detection,
-    # which often triggers on separate video+audio requests.
     "360": "best[height<=360]/best[height<=360]",
     "720": "best[height<=720]/best[height<=720]",
 }
@@ -171,17 +175,29 @@ def download_video(url, format_id="360", progress_callback=None, start_time=None
 
 
 def _try_download(uniq, formats, extra, progress_callback, url):
+    """Try each format, rotating through client strategies on 'Sign in' errors."""
+    sign_in = "sign in" if True else ""  # just for the reference
     for fmt in formats:
-        o = os.path.join(DOWNLOAD_DIR, "yt_{}.%(ext)s".format(uniq))
-        ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + extra + [url],
-                              progress_callback=progress_callback, use_ejs=True)
-        if ok:
-            fp = _find_file(uniq)
-            if fp:
-                info_path = fp.rsplit(".", 1)[0] + ".info.json"
-                meta = _read_info(info_path) if os.path.isfile(info_path) else {}
-                return fp, meta
-        logger.error("yt-dlp format '%s' FAILED. stderr:%s%s", fmt, NL, serr)
+        # Try each client strategy in order
+        for client_idx in range(len(CLIENT_STRATEGIES)):
+            o = os.path.join(DOWNLOAD_DIR, "yt_{}.%(ext)s".format(uniq))
+            ok, sout, serr = _run(
+                ["--format", fmt, "--output", o] + BASE + SINGLE + extra + [url],
+                progress_callback=progress_callback, use_ejs=True, client_idx=client_idx)
+            if ok:
+                fp = _find_file(uniq)
+                if fp:
+                    info_path = fp.rsplit(".", 1)[0] + ".info.json"
+                    meta = _read_info(info_path) if os.path.isfile(info_path) else {}
+                    return fp, meta
+            # If blocked by sign-in, try next client
+            if "Sign in" in serr or "sign in" in serr.lower():
+                logger.info("Client strategy %d blocked, trying next...", client_idx)
+                continue
+            # Real error (not sign-in), stop retrying
+            logger.error("yt-dlp format '%s' client %d FAILED. stderr:%s%s",
+                         fmt, client_idx, NL, serr)
+            break
     return None, {}
 
 
@@ -192,7 +208,7 @@ def download_audio(url, progress_callback=None):
     ok, sout, serr = _run(
         ["--format", "bestaudio[ext=m4a]/bestaudio/best", "--extract-audio",
          "--audio-format", "mp3", "--output", o] + BASE + SINGLE + [url],
-        progress_callback=progress_callback, use_ejs=True)
+        progress_callback=progress_callback, use_ejs=True, client_idx=0)
     if ok:
         fp = _find_file(uniq, ext_filter=".mp3")
         if fp:
@@ -207,7 +223,7 @@ def download_playlist_audio(url):
     o = os.path.join(DOWNLOAD_DIR, "pl_{}_%(playlist_index)s.%(ext)s".format(uniq))
     ok, sout, serr = _run(["--playlist-items", "1-10", "--extract-audio",
                           "--audio-format", "mp3", "--output", o] + BASE + [url],
-                          timeout=600, use_ejs=True)
+                          timeout=600, use_ejs=True, client_idx=0)
     files = sorted(os.listdir(DOWNLOAD_DIR))
     result = [os.path.join(DOWNLOAD_DIR, f) for f in files
               if "pl_{}_".format(uniq) in f and f.endswith(".mp3")]
@@ -222,7 +238,6 @@ def validate_cookies(cookies_path=None):
     if sz < 50:
         logger.warning("Cookies file too small (%d bytes)", sz)
         return False, "Archivo demasiado pequeno"
-    # Check if file is in Netscape format
     try:
         with open(path) as f:
             header = f.read(200)
@@ -233,19 +248,24 @@ def validate_cookies(cookies_path=None):
         logger.warning("Could not read cookies file: %s", e)
         return False, "No se pudo leer el archivo"
     logger.debug("Validating cookies at %s (%d bytes)", path, sz)
-    # Use two test URLs: one popular (should work without cookies) and one random
-    test_urls = ["https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                 "https://www.youtube.com/watch?v=jNQXAC9IVRw"]
-    for test_url in test_urls:
-        ok, o, s = _run(["--simulate", "--print", "title", "--format", "best"] + SINGLE + [test_url],
-                        30, use_ejs=True)
-        if "Sign in" in s or "sign in" in s.lower():
-            for line in s.strip().split(NL):
+    # Test with the same format and primary client as real downloads
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    ok, o, s = _run(
+        ["--simulate", "--print", "title", "--format", FMT_SELECTOR["360"]] + SINGLE + [test_url],
+        30, use_ejs=True, client_idx=0)
+    if "Sign in" in s or "sign in" in s.lower():
+        # Try with next client
+        ok2, o2, s2 = _run(
+            ["--simulate", "--print", "title", "--format", FMT_SELECTOR["360"]] + SINGLE + [test_url],
+            30, use_ejs=True, client_idx=1)
+        if "Sign in" in s2 or "sign in" in s2.lower():
+            for line in s2.strip().split(NL):
                 if "ERROR:" in line:
                     return False, "YOUTUBE_BLOCK: " + line[:150]
-            return False, "YOUTUBE_BLOCK: " + s[:200]
-        if ok and o.strip():
-            logger.info("Cookies OK: %s", o.strip()[:60])
-            return True, "OK"
+            return False, "YOUTUBE_BLOCK: " + s2[:200]
+        ok, o, s = ok2, o2, s2
+    if ok and o.strip():
+        logger.info("Cookies OK: %s", o.strip()[:60])
+        return True, "OK"
     logger.error("validate_cookies FAILED with yt-dlp stderr:%s%s", NL, s)
     return False, "ERROR: " + s[:300]
