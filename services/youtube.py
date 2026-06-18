@@ -5,9 +5,20 @@ from config import DOWNLOAD_DIR, COOKIES_FILE
 logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist","--playlist-end","1"]
-# Use android client ONLY when NO cookies are available (avoids JS challenge).
-# When cookies exist, the web client works fine and has more format options.
-YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android"]
+
+# EJS (External JavaScript Runtime) flags for YouTube challenge resolution.
+# Deno is installed in the Docker image and yt-dlp-ejs provides the component fetcher.
+# --remote-components ejs:npm allows yt-dlp to fetch JS challenge scripts at runtime.
+EJS_FLAGS = [
+    "--js-runtimes", "deno",
+    "--remote-components", "ejs:npm",
+]
+
+# Combine android and web player clients for maximum format availability.
+# Android client returns downloadable formats reliably; web client adds more format IDs.
+# Separated by comma, yt-dlp tries them in order.
+YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android,web"]
+
 BASE = [
     "--no-warnings",
     "--quiet",
@@ -20,6 +31,7 @@ BASE = [
     "--no-playlist"
 ]
 
+
 def _cleanup():
     if not os.path.isdir(DOWNLOAD_DIR): return
     for f in os.listdir(DOWNLOAD_DIR):
@@ -27,13 +39,14 @@ def _cleanup():
             try: os.remove(os.path.join(DOWNLOAD_DIR,f))
             except: pass
 
+
 def _run(args, timeout=240, progress_callback=None):
     cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"]
     if os.path.isfile(COOKIES_FILE):
         cmd.extend(["--cookies", COOKIES_FILE])
-    else:
-        # Only use android client when no cookies (avoids JS challenge in Render)
-        cmd.extend(YT_EXTRACTOR)
+    # Always use EJS + combined player clients for resilience
+    cmd.extend(EJS_FLAGS)
+    cmd.extend(YT_EXTRACTOR)
     cmd.extend(args)
     try:
         if not progress_callback:
@@ -62,6 +75,7 @@ def _run(args, timeout=240, progress_callback=None):
         return process.returncode == 0, "".join(stdout_content).strip(), stderr.strip()
     except Exception as e: return False, "", str(e)
 
+
 def get_video_info(url):
     import requests; from config import HTTP_TIMEOUT
     try:
@@ -69,6 +83,7 @@ def get_video_info(url):
         t = r.json().get("title","Video") if r.status_code==200 else "YouTube Video"
         return {"title":t}
     except: return {"title":"YouTube Video"}
+
 
 def _crop_vertical(path):
     try:
@@ -84,6 +99,7 @@ def _crop_vertical(path):
     except: pass
     return None
 
+
 def _convert_to_gif(path):
     try:
         out = path.rsplit(".", 1)[0] + ".gif"
@@ -93,12 +109,10 @@ def _convert_to_gif(path):
     except: pass
     return None
 
+
 def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None, to_gif=False):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
-    # Use flexible format selectors that work with any YouTube client (no hardcoded IDs)
-    # yt-dlp will pick the best matching format automatically
     if format_id == "vertical":
-        # Best video+audio up to 480p, with many fallbacks
         f = ["bestvideo[height<=480]+bestaudio/best[height<=480]/best"]
     elif format_id == "360":
         f = ["bestvideo[height<=360]+bestaudio/best[height<=360]/best"]
@@ -116,8 +130,9 @@ def download_video(url, format_id="360", progress_callback=None, start_time=None
         return fp, ""
     return None, "Error"
 
+
 def _try_download(uniq, formats, args, progress_callback, url):
-    """Try to download with the given formats. _run handles cookies vs android client."""
+    nl = chr(10)
     for fmt in formats:
         o = os.path.join(DOWNLOAD_DIR, f"yt_{uniq}.%(ext)s")
         ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url], progress_callback=progress_callback)
@@ -125,18 +140,21 @@ def _try_download(uniq, formats, args, progress_callback, url):
             for fn in os.listdir(DOWNLOAD_DIR):
                 if uniq in fn and os.path.isfile(fp := os.path.join(DOWNLOAD_DIR, fn)):
                     return fp, ok
-        logger.info("Format %s failed: %s", fmt, serr[:150] if serr else "no error")
+        logger.error("yt-dlp format '%s' FAILED. stderr:%s%s", fmt, nl, serr)
     return None, False
 
+
 def download_audio(url, progress_callback=None):
+    nl = chr(10)
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     o = os.path.join(DOWNLOAD_DIR, f"audio_{uniq}.%(ext)s")
     ok, sout, serr = _run(["--format", "bestaudio[ext=m4a]/bestaudio/best", "--extract-audio", "--audio-format", "mp3", "--output", o] + BASE + SINGLE + [url], progress_callback=progress_callback)
     if ok:
         for fn in os.listdir(DOWNLOAD_DIR):
             if uniq in fn and fn.endswith(".mp3"): return os.path.join(DOWNLOAD_DIR, fn), ""
-    logger.info("Audio download failed: %s", serr[:100] if serr else "no error")
+    logger.error("yt-dlp audio download FAILED. stderr:%s%s", nl, serr)
     return None, "Error"
+
 
 def download_playlist_audio(url):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
@@ -145,15 +163,21 @@ def download_playlist_audio(url):
     files = [os.path.join(DOWNLOAD_DIR, f) for f in sorted(os.listdir(DOWNLOAD_DIR)) if f"pl_{uniq}_" in f and f.endswith(".mp3")]
     return files if files else None, "Error"
 
+
 def validate_cookies():
+    """Check whether the stored cookies.txt is valid for YouTube.
+
+    With EJS and Deno now available in the Docker image, a simulation failure
+    is a real problem (not a false positive caused by missing JS runtime).
+    We therefore reject cookies that fail the simulation unless "Sign in" is
+    the only error (which means they're expired, a different issue).
+    """
     if not os.path.isfile(COOKIES_FILE): return False,"No hay cookies"
     ok,o,s = _run(["--simulate","--print","title","--format","best"]+SINGLE+["https://www.youtube.com/watch?v=jNQXAC9IVRw"],30)
     if "Sign in" in s:
         return False,"YOUTUBE_BLOCK"
     if ok and o.strip():
         return True,"OK"
-    # If we got here, yt-dlp couldn't complete the simulation (e.g. JS challenge
-    # in Render's slim environment). Accept the cookies anyway — they may still
-    # work for actual downloads, and the validation test itself is unreliable.
-    logger.warning("validate_cookies simulation failed, accepting cookies anyway: %s", s[:150])
-    return True,"OK"
+    nl = chr(10)
+    logger.error("validate_cookies FAILED with yt-dlp stderr:%s%s", nl, s)
+    return False,"ERROR: " + s[:300]
