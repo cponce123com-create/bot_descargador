@@ -217,13 +217,18 @@ def validate_cookies(cookies_path=None):
         return False, "No hay cookies"
     test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
     ok, o, s = _run(["--simulate", "--print", "title", "--format", "best"] + SINGLE + [test_url],
-                    30, use_ejs=False)
+                    30, use_ejs=True)
     if "Sign in" in s or "sign in" in s.lower():
         for line in s.strip().split(NL):
             if "ERROR:" in line:
                 return False, "YOUTUBE_BLOCK: " + line[:150]
         return False, "YOUTUBE_BLOCK: " + s[:200]
+    # If exit code is 0 and we got a title, cookies are valid
     if ok and o.strip():
         return True, "OK"
+    # Check if stderr has only warnings (not real errors)
+    if ok and not o.strip():
+        # Possibly just warnings, try extracting title differently
+        pass
     logger.error("validate_cookies FAILED with yt-dlp stderr:%s%s", NL, s)
     return False, "ERROR: " + s[:300]
