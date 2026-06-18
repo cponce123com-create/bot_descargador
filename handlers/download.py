@@ -102,43 +102,48 @@ async def handle_tiktok(up, ctx, url):
     await s.edit_text("❌ Error."); return ConversationHandler.END
 
 async def format_callback(up, ctx):
-    from services.youtube import download_video, download_audio
-    q = up.callback_query; await q.answer(); c = q.data
-    if c.startswith("yt_search_"):
-        url = f"https://www.youtube.com/watch?v={c.replace('yt_search_', '')}"
-        await q.message.delete(); return await handle_youtube(up, ctx, url)
+    try:
+        from services.youtube import download_video, download_audio
+        q = up.callback_query; await q.answer(); c = q.data
+        if c.startswith("yt_search_"):
+            url = f"https://www.youtube.com/watch?v={c.replace('yt_search_', '')}"
+            await q.message.delete(); return await handle_youtube(up, ctx, url)
     
-    url = ctx.user_data.get("yt_url"); title = ctx.user_data.get("yt_title","")
-    if c=="yt_cancel": await q.edit_message_text("✅ Cancelado."); return ConversationHandler.END
-    msg = await q.edit_message_text("⏳ Iniciando...")
-    
-    def progress(p):
-        try:
-            bar = "█" * int(p//10) + "░" * (10 - int(p//10))
-            asyncio.run_coroutine_threadsafe(msg.edit_text(f"⏳ Procesando: {bar} {p}%"), asyncio.get_event_loop())
-        except: pass
+        url = ctx.user_data.get("yt_url"); title = ctx.user_data.get("yt_title","")
+        if c=="yt_cancel": await q.edit_message_text("✅ Cancelado."); return ConversationHandler.END
+        msg = await q.edit_message_text("⏳ Iniciando...")
+        
+        def progress(p):
+            try:
+                bar = "█" * int(p//10) + "░" * (10 - int(p//10))
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(msg.edit_text(f"⏳ Procesando: {bar} {p}%"), loop)
+            except: pass
 
-    trim = ctx.user_data.get("trim")
-    if c=="yt_playlist":
-        from services.youtube import download_playlist_audio
-        paths, err = await asyncio.to_thread(download_playlist_audio, url)
-        if paths:
-            for p in paths:
-                with open(p, "rb") as f: await q.message.reply_audio(f)
-                cleanup(p)
-            await q.delete_message(); return ConversationHandler.END
-    elif c=="yt_audio": path, err = await asyncio.to_thread(download_audio, url, progress)
-    elif c=="yt_gif": path, err = await asyncio.to_thread(download_video, url, progress_callback=progress, to_gif=True, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
-    else: path, err = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
-    
-    if path:
-        with open(path,"rb") as f:
-            if c=="yt_audio": await q.message.reply_audio(f, caption=_cap(url,title,"MP3","youtube"))
-            elif c=="yt_gif": await q.message.reply_animation(f, caption=_cap(url,title,"GIF","youtube"))
-            else: await q.message.reply_video(f, caption=_cap(url,title,QUAL.get(c,"HD"),"youtube"), supports_streaming=True)
-        await q.delete_message(); cleanup(path)
-    else: await q.edit_message_text(_err(err))
-    return ConversationHandler.END
+        trim = ctx.user_data.get("trim")
+        if c=="yt_playlist":
+            from services.youtube import download_playlist_audio
+            paths, err = await asyncio.to_thread(download_playlist_audio, url)
+            if paths:
+                for p in paths:
+                    with open(p, "rb") as f: await q.message.reply_audio(f)
+                    cleanup(p)
+                await q.delete_message(); return ConversationHandler.END
+        elif c=="yt_audio": path, err = await asyncio.to_thread(download_audio, url, progress)
+        elif c=="yt_gif": path, err = await asyncio.to_thread(download_video, url, progress_callback=progress, to_gif=True, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+        else: path, err = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+        
+        if path:
+            with open(path,"rb") as f:
+                if c=="yt_audio": await q.message.reply_audio(f, caption=_cap(url,title,"MP3","youtube"))
+                elif c=="yt_gif": await q.message.reply_animation(f, caption=_cap(url,title,"GIF","youtube"))
+                else: await q.message.reply_video(f, caption=_cap(url,title,QUAL.get(c,"HD"),"youtube"), supports_streaming=True)
+            await q.delete_message(); cleanup(path)
+        else: await q.edit_message_text(_err(err))
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error en format_callback: {e}")
+        return ConversationHandler.END
 
 async def handle_facebook(up, ctx, url):
     ctx.user_data["gen_url"] = url; ctx.user_data["gen_title"] = "Facebook Video"
@@ -162,30 +167,35 @@ async def handle_generic(up, ctx, url, plat):
     return SELECTING_FORMAT
 
 async def handle_generic_download(up, ctx):
-    from services.generic import download_generic
-    from services.youtube import download_video, download_audio
-    q = up.callback_query; await q.answer(); c = q.data
-    url = ctx.user_data.get("gen_url"); title = ctx.user_data.get("gen_title", "Video")
-    plat = c.split("_")[-1]; msg = await q.edit_message_text("⏳ Iniciando...")
-    def progress(p):
-        try:
-            bar = "█" * int(p//10) + "░" * (10 - int(p//10))
-            asyncio.run_coroutine_threadsafe(msg.edit_text(f"⏳ Procesando: {bar} {p}%"), asyncio.get_event_loop())
-        except: pass
-    
-    trim = ctx.user_data.get("trim")
-    if "_audio_" in c: path, err = await asyncio.to_thread(download_audio, url, progress)
-    elif "_gif_" in c: path, err = await asyncio.to_thread(download_video, url, to_gif=True, progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
-    else: path, err = await asyncio.to_thread(download_generic, url, plat, progress)
-    
-    if path:
-        with open(path, "rb") as f:
-            if "_audio_" in c: await q.message.reply_audio(f, caption=_cap(url, title, "MP3", plat))
-            elif "_gif_" in c: await q.message.reply_animation(f, caption=_cap(url, title, "GIF", plat))
-            else: await q.message.reply_video(f, caption=_cap(url, title, "HD", plat), supports_streaming=True)
-        await q.delete_message(); cleanup(path)
-    else: await q.edit_message_text(_err(err))
-    return ConversationHandler.END
+    try:
+        from services.generic import download_generic
+        from services.youtube import download_video, download_audio
+        q = up.callback_query; await q.answer(); c = q.data
+        url = ctx.user_data.get("gen_url"); title = ctx.user_data.get("gen_title", "Video")
+        plat = c.split("_")[-1]; msg = await q.edit_message_text("⏳ Iniciando...")
+        def progress(p):
+            try:
+                bar = "█" * int(p//10) + "░" * (10 - int(p//10))
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(msg.edit_text(f"⏳ Procesando: {bar} {p}%"), loop)
+            except: pass
+        
+        trim = ctx.user_data.get("trim")
+        if "_audio_" in c: path, err = await asyncio.to_thread(download_audio, url, progress)
+        elif "_gif_" in c: path, err = await asyncio.to_thread(download_video, url, to_gif=True, progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+        else: path, err = await asyncio.to_thread(download_generic, url, plat, progress)
+        
+        if path:
+            with open(path, "rb") as f:
+                if "_audio_" in c: await q.message.reply_audio(f, caption=_cap(url, title, "MP3", plat))
+                elif "_gif_" in c: await q.message.reply_animation(f, caption=_cap(url, title, "GIF", plat))
+                else: await q.message.reply_video(f, caption=_cap(url, title, "HD", plat), supports_streaming=True)
+            await q.delete_message(); cleanup(path)
+        else: await q.edit_message_text(_err(err))
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error en handle_generic_download: {e}")
+        return ConversationHandler.END
 
 async def cancel(up, ctx):
     await up.message.reply_text("✅ Cancelado."); return ConversationHandler.END
