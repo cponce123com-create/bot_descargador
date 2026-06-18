@@ -145,8 +145,10 @@ def _crop_vertical(path):
 
 
 FMT_SELECTOR = {
-    "360": "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]",
-    "720": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
+    # Use pre-merged single-stream formats to avoid YouTube bot detection,
+    # which often triggers on separate video+audio requests.
+    "360": "best[height<=360]/best[height<=360]",
+    "720": "best[height<=720]/best[height<=720]",
 }
 
 
