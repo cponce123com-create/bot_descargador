@@ -99,6 +99,8 @@ async def _react(msg, emoji):
 
 async def handle_message(up, ctx):
     if not await _require_auth(up): return ConversationHandler.END
+    if not up.message:
+        return ConversationHandler.END
     t = up.message.text or up.message.caption or ""
     if not t.strip():
         await up.message.reply_text("❌ URL no valida.")
