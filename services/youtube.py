@@ -121,3 +121,11 @@ def download_playlist_audio(url):
     ok, sout, serr = _run(["--playlist-items", "1-10", "--extract-audio", "--audio-format", "mp3", "--output", o] + BASE + [url], timeout=600)
     files = [os.path.join(DOWNLOAD_DIR, f) for f in sorted(os.listdir(DOWNLOAD_DIR)) if f"pl_{uniq}_" in f and f.endswith(".mp3")]
     return files if files else None, "Error"
+
+def validate_cookies():
+    if not os.path.isfile(COOKIES_FILE): return False,"No hay cookies"
+    ok,o,s = _run(["--simulate","--print","title","--format","best"]+SINGLE+["https://www.youtube.com/watch?v=jNQXAC9IVRw"],30)
+    if any(x in s.lower() for x in ["no video formats","no supported javascript"]): return False,"ENV_ERROR"
+    if "Sign in" in s: return False,"YOUTUBE_BLOCK"
+    if ok and o.strip(): return True,"OK"
+    return False,s[:200] or "Error"
