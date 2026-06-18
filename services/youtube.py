@@ -222,17 +222,30 @@ def validate_cookies(cookies_path=None):
     if sz < 50:
         logger.warning("Cookies file too small (%d bytes)", sz)
         return False, "Archivo demasiado pequeno"
+    # Check if file is in Netscape format
+    try:
+        with open(path) as f:
+            header = f.read(200)
+        if "# Netscape" not in header and ".youtube.com" not in header and "youtube.com" not in header:
+            logger.warning("Cookies file missing Netscape header or youtube.com entries")
+            return False, "Formato invalido: debe ser Netscape con cookies de .youtube.com"
+    except Exception as e:
+        logger.warning("Could not read cookies file: %s", e)
+        return False, "No se pudo leer el archivo"
     logger.debug("Validating cookies at %s (%d bytes)", path, sz)
-    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-    ok, o, s = _run(["--simulate", "--print", "title", "--format", "best"] + SINGLE + [test_url],
-                    30, use_ejs=True)
-    if "Sign in" in s or "sign in" in s.lower():
-        for line in s.strip().split(NL):
-            if "ERROR:" in line:
-                return False, "YOUTUBE_BLOCK: " + line[:150]
-        return False, "YOUTUBE_BLOCK: " + s[:200]
-    if ok and o.strip():
-        logger.info("Cookies validated OK: %s", o.strip()[:60])
-        return True, "OK"
+    # Use two test URLs: one popular (should work without cookies) and one random
+    test_urls = ["https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                 "https://www.youtube.com/watch?v=jNQXAC9IVRw"]
+    for test_url in test_urls:
+        ok, o, s = _run(["--simulate", "--print", "title", "--format", "best"] + SINGLE + [test_url],
+                        30, use_ejs=True)
+        if "Sign in" in s or "sign in" in s.lower():
+            for line in s.strip().split(NL):
+                if "ERROR:" in line:
+                    return False, "YOUTUBE_BLOCK: " + line[:150]
+            return False, "YOUTUBE_BLOCK: " + s[:200]
+        if ok and o.strip():
+            logger.info("Cookies OK: %s", o.strip()[:60])
+            return True, "OK"
     logger.error("validate_cookies FAILED with yt-dlp stderr:%s%s", NL, s)
     return False, "ERROR: " + s[:300]
