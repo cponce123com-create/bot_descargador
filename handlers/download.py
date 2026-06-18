@@ -31,6 +31,15 @@ PINTEREST_RE = re.compile(r"(https?://)?(www\.|id\.|pin\.)?(pinterest\.com|pin\.
 
 QUAL = {"video":"360p","vertical":"Vertical 9:16","audio":"MP3", "gif": "GIF"}
 
+def _escape_md(text):
+    """Escape MarkdownV1 special characters so user-provided text
+    (titles with _, *, [, ], etc.) doesn't break parse_mode formatting."""
+    if not text:
+        return text
+    for ch in ("_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
 def _err(e):
     m = {"ENV_ERROR":"Error del servidor.","YOUTUBE_BLOCK":"Bloqueado. Usa /cookies.","TIMEOUT":"Tardo mucho. Reintenta.","FORMATO_NO_DISPONIBLE":"No disponible.","ARCHIVO_MUY_GRANDE":"Excede 300MB."}
     for k,v in m.items():
@@ -40,7 +49,7 @@ def _err(e):
 def _cap(url,title,quality,plat):
     m = {"youtube":"✨📺 YouTube","tiktok":"✨📺 TikTok","facebook":"✨📺 Facebook","instagram":"✨📸 Instagram","x":"✨🐦 X","reddit":"✨🤖 Reddit","pinterest":"✨📌 Pinterest"}
     e = m.get(plat, "✨📺 Video")
-    t = (title[:80]+"...") if title and len(title)>80 else (title or "Video")
+    t = _escape_md(title[:80] + "...") if title and len(title)>80 else _escape_md(title or "Video")
     return f"{e}\n━"*10 + f"\n🔗 {url}\n📝 {t}\n📺 {quality}\n📥 ¡Guardado!"
 
 def detect_platform(url):
@@ -93,11 +102,12 @@ async def handle_youtube(up, ctx, url):
           [InlineKeyboardButton("🎵 Audio",callback_data="yt_audio"), InlineKeyboardButton("🎞 GIF", callback_data="yt_gif")]]
     if YT_PL_RE.search(url): kb.append([InlineKeyboardButton("🎼 Playlist (Top 10)", callback_data="yt_playlist")])
     kb.append([InlineKeyboardButton("❌ Cancelar",callback_data="yt_cancel")])
+    safe_title = _escape_md(info["title"][:50] + "...") if len(info["title"]) > 50 else _escape_md(info["title"])
     if thumb:
-        await up.message.reply_photo(thumb, caption=f"📹 *{info['title'][:50]}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await up.message.reply_photo(thumb, caption=f"📹 *{safe_title}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         await s.delete()
     else:
-        await s.edit_text(f"📹 *{info['title'][:50]}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await s.edit_text(f"📹 *{safe_title}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     return SELECTING_FORMAT
 
 async def handle_tiktok(up, ctx, url):
@@ -144,17 +154,24 @@ async def format_callback(up, ctx):
             except: pass
 
         trim = ctx.user_data.get("trim")
-        if c=="yt_playlist":
-            from services.youtube import download_playlist_audio
-            paths, err = await asyncio.to_thread(download_playlist_audio, url)
-            if paths:
-                for p in paths:
-                    with open(p, "rb") as f: await q.message.reply_audio(f)
-                    cleanup(p)
-                return ConversationHandler.END
-        elif c=="yt_audio": path, err = await asyncio.to_thread(download_audio, url, progress)
-        elif c=="yt_gif": path, err = await asyncio.to_thread(download_video, url, progress_callback=progress, to_gif=True, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
-        else: path, err = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+        sem = ctx.bot_data.get("download_sem")
+        if sem:
+            await sem.acquire()
+        try:
+            if c=="yt_playlist":
+                from services.youtube import download_playlist_audio
+                paths, err = await asyncio.to_thread(download_playlist_audio, url)
+                if paths:
+                    for p in paths:
+                        with open(p, "rb") as f: await q.message.reply_audio(f)
+                        cleanup(p)
+                    return ConversationHandler.END
+            elif c=="yt_audio": path, err = await asyncio.to_thread(download_audio, url, progress)
+            elif c=="yt_gif": path, err = await asyncio.to_thread(download_video, url, progress_callback=progress, to_gif=True, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+            else: path, err = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+        finally:
+            if sem:
+                sem.release()
         
         if path:
             with open(path,"rb") as f:
@@ -192,10 +209,11 @@ async def handle_generic(up, ctx, url, plat):
     ctx.user_data["gen_url"] = url; ctx.user_data["gen_title"] = info["title"]
     kb = [[InlineKeyboardButton("🎬 Video", callback_data=f"gen_video_{plat}"), InlineKeyboardButton("🎵 Audio", callback_data=f"gen_audio_{plat}")],
           [InlineKeyboardButton("🎞 GIF", callback_data=f"gen_gif_{plat}"), InlineKeyboardButton("❌ Cancelar", callback_data="yt_cancel")]]
+    safe_title = _escape_md(info["title"][:50] + "...") if len(info["title"]) > 50 else _escape_md(info["title"])
     if info.get("thumbnail"):
-        await up.message.reply_photo(info["thumbnail"], caption=f"📹 *{info['title'][:50]}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await up.message.reply_photo(info["thumbnail"], caption=f"📹 *{safe_title}*\nSelecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         await s.delete()
-    else: await s.edit_text(f"📹 *{info['title'][:50]}*\nSelecciona:", reply_markup=InlineKeyboardMarkup(kb))
+    else: await s.edit_text(f"📹 *{safe_title}*\nSelecciona:", reply_markup=InlineKeyboardMarkup(kb))
     return SELECTING_FORMAT
 
 async def handle_generic_download(up, ctx):
@@ -214,9 +232,17 @@ async def handle_generic_download(up, ctx):
             except: pass
 
         trim = ctx.user_data.get("trim")
-        if "_audio_" in c: path, err = await asyncio.to_thread(download_audio, url, progress)
-        elif "_gif_" in c: path, err = await asyncio.to_thread(download_video, url, to_gif=True, progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
-        else: path, err = await asyncio.to_thread(download_generic, url, plat, progress)
+        # Acquire global semaphore to cap concurrent downloads
+        sem = ctx.bot_data.get("download_sem")
+        if sem:
+            await sem.acquire()
+        try:
+            if "_audio_" in c: path, err = await asyncio.to_thread(download_audio, url, progress)
+            elif "_gif_" in c: path, err = await asyncio.to_thread(download_video, url, to_gif=True, progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+            else: path, err = await asyncio.to_thread(download_generic, url, plat, progress)
+        finally:
+            if sem:
+                sem.release()
 
         if path:
             sz = os.path.getsize(path)

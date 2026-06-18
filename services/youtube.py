@@ -89,6 +89,32 @@ def _convert_to_gif(path):
     except: pass
     return None
 
+def _try_download(uniq, formats, args, progress_callback, use_extractor, url):
+    """Try to download with the given formats and extractor setting."""
+    for fmt in formats:
+        o = os.path.join(DOWNLOAD_DIR, f"yt_{uniq}.%(ext)s")
+        if use_extractor:
+            ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url], progress_callback=progress_callback)
+        else:
+            # Retry without YT_EXTRACTOR (web client fallback)
+            cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline"]
+            if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies", COOKIES_FILE])
+            cmd.extend(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url])
+            if not progress_callback:
+                try:
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+                    ok, sout, serr = r.returncode==0, r.stdout.strip(), r.stderr.strip()
+                except Exception as e:
+                    ok, sout, serr = False, "", str(e)
+            else:
+                ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url], progress_callback=progress_callback)
+        if ok:
+            for fn in os.listdir(DOWNLOAD_DIR):
+                if uniq in fn and os.path.isfile(fp := os.path.join(DOWNLOAD_DIR, fn)):
+                    return fp, ok
+        logger.info("Format %s (extractor=%s) failed: %s", fmt, use_extractor, serr[:150] if serr else "no error")
+    return None, False
+
 def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None, to_gif=False):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     # Extended format fallback list for Render's android client
@@ -103,17 +129,16 @@ def download_video(url, format_id="360", progress_callback=None, start_time=None
     if start_time and end_time:
         args.extend(["--download-sections", f"*{start_time}-{end_time}", "--force-keyframes-at-cuts"])
         
-    for fmt in f:
-        o = os.path.join(DOWNLOAD_DIR, f"yt_{uniq}.%(ext)s")
-        ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url], progress_callback=progress_callback)
-        if ok:
-            for fn in os.listdir(DOWNLOAD_DIR):
-                if uniq in fn and os.path.isfile(fp := os.path.join(DOWNLOAD_DIR, fn)):
-                    if to_gif: return _convert_to_gif(fp), ""
-                    if format_id == "vertical": return _crop_vertical(fp) or fp, ""
-                    return fp, ""
-        # Log which format failed so we can debug
-        logger.info("Format %s failed: %s", fmt, serr[:100] if serr else "no error")
+    # Try with android client first, then fall back to default/web client
+    for use_extractor in (True, False):
+        fp, ok = _try_download(uniq, f, args, progress_callback, use_extractor, url)
+        if fp:
+            if to_gif: return _convert_to_gif(fp), ""
+            if format_id == "vertical": return _crop_vertical(fp) or fp, ""
+            return fp, ""
+        # If format discovery itself failed (not a specific format), fall back faster
+        if not ok:
+            continue
     return None, "Error"
 
 def download_audio(url, progress_callback=None):

@@ -35,7 +35,7 @@ async def help_command(up, ctx):
 + "*X/Twitter, Reddit, Pinterest:* envia URL del video." + chr(10) + chr(10)
 + "*Recorte:* Envia `00:10-00:20` junto al link para recortar." + chr(10) + chr(10)
         + "/cookies - cookies de YouTube (opcional)" + chr(10)
-        + "Limite: 300MB por archivo")
+        + "Limite: 50MB por archivo")
     await up.message.reply_text(text, parse_mode="Markdown")
 
 async def cookies_command(up, ctx):

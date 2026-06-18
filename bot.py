@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import threading
+import traceback
 
 from telegram import Update
 from telegram.ext import (
@@ -32,6 +33,18 @@ from handlers.download import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def global_error_handler(up: Update, ctx):
+    """Log all unhandled errors and notify the user."""
+    logger.exception("Unhandled error: %s", ctx.error)
+    tb = "".join(traceback.format_exception(None, ctx.error, ctx.error.__traceback__))
+    logger.error("Traceback:\n%s", tb)
+    if up and up.effective_message:
+        try:
+            await up.effective_message.reply_text("❌ Ocurrio un error, intenta de nuevo.")
+        except Exception:
+            pass
 
 # Global concurrency limiter: max 2 concurrent downloads (safe for a small VPS).
 # Acquired in handlers that call yt-dlp/ffmpeg subprocesses.
@@ -152,6 +165,9 @@ def main() -> None:
         app.add_handler(CommandHandler("cookies", cookies_command))
         app.add_handler(conv_handler)
         app.add_handler(MessageHandler(filters.Document.ALL, cookies_command))
+
+        # Register global error handler
+        app.add_error_handler(global_error_handler)
 
         logger.info("Bot conectandose a Telegram...")
         sys.stdout.flush()
