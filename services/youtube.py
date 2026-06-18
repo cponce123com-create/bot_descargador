@@ -5,7 +5,17 @@ from config import DOWNLOAD_DIR, COOKIES_FILE
 logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist","--playlist-end","1"]
-BASE = ["--no-warnings","--quiet","--no-mtime","--force-overwrites","--max-filesize","300M","--merge-output-format","mp4"]
+BASE = [
+    "--no-warnings",
+    "--quiet",
+    "--no-mtime",
+    "--force-overwrites",
+    "--max-filesize", "300M",
+    "--merge-output-format", "mp4",
+    "--concurrent-fragments", "5",  # Descarga paralela de fragmentos
+    "--buffer-size", "16K",         # Buffer optimizado
+    "--no-playlist"
+]
 
 def _cleanup():
     if not os.path.isdir(DOWNLOAD_DIR): return
@@ -15,11 +25,12 @@ def _cleanup():
             except: pass
 
 def _run(args, timeout=240):
-    cmd = [YT]
+    cmd = [YT, "--no-check-certificates", "--no-cache-dir"] # Desactivar check de certs y cache para velocidad
     if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies",COOKIES_FILE])
     cmd.extend(args)
     try:
-        r = subprocess.run(cmd,capture_output=True,text=True,timeout=timeout)
+        # Usar Popen para tener más control si fuera necesario, pero run es suficiente con optimizaciones
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.returncode==0, r.stdout.strip(), r.stderr.strip()
     except subprocess.TimeoutExpired: return False,"","TIMEOUT"
     except Exception as e: return False,"",str(e)
@@ -72,8 +83,9 @@ def _crop_vertical(path):
         if new_h < 2: new_h = 2
         
         # Usar libx264 para mejor compatibilidad con Telegram
-        cmd = ["ffmpeg","-y","-nostdin","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}",
-               "-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k",out]
+        # Optimización máxima para Render: preset superfast/ultrafast y menos hilos para no saturar CPU
+        cmd = ["ffmpeg","-y","-nostdin","-threads","2","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}",
+               "-c:v","libx264","-preset","ultrafast","-crf","28","-c:a","aac","-b:a","96k",out]
         
         logger.info("Cropping %dx%d -> %dx%d",w,h,new_w,new_h)
         r = subprocess.run(cmd,capture_output=True,text=True,timeout=300)
@@ -88,10 +100,10 @@ def _crop_vertical(path):
 def download_video(url, format_id="360"):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     if format_id=="vertical":
-        # Para vertical, intentamos obtener una calidad decente para recortar
-        f = ["bestvideo[height<=720]+bestaudio/best[height<=720]","best[height<=480]","worst","18","best"]
+        # Priorizar formatos ya combinados para evitar procesamiento extra en Render (CPU limitado)
+        f = ["bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]", "best[height<=720]"]
     else:
-        f = ["best[height<=360]","bestvideo[height<=360]+bestaudio","worst","18","best"]
+        f = ["best[height<=360][ext=mp4]", "bestvideo[height<=360]+bestaudio/best[height<=360]", "18"]
         
     last = ""
     for fmt in f:

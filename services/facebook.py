@@ -5,7 +5,16 @@ from config import DOWNLOAD_DIR, COOKIES_FILE
 logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist","--playlist-end","1"]
-BASE = ["--no-warnings","--quiet","--no-mtime","--force-overwrites","--max-filesize","300M","--merge-output-format","mp4"]
+BASE = [
+    "--no-warnings",
+    "--quiet",
+    "--no-mtime",
+    "--force-overwrites",
+    "--max-filesize", "300M",
+    "--merge-output-format", "mp4",
+    "--concurrent-fragments", "5",
+    "--buffer-size", "16K"
+]
 
 def _cleanup():
     if not os.path.isdir(DOWNLOAD_DIR): return
@@ -15,11 +24,11 @@ def _cleanup():
             except: pass
 
 def _run(args, timeout=240):
-    cmd = [YT]
+    cmd = [YT, "--no-check-certificates", "--no-cache-dir"]
     if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies",COOKIES_FILE])
     cmd.extend(args)
     try:
-        r = subprocess.run(cmd,capture_output=True,text=True,timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.returncode==0, r.stdout.strip(), r.stderr.strip()
     except subprocess.TimeoutExpired: return False,"","TIMEOUT"
     except Exception as e: return False,"",str(e)
