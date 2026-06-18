@@ -132,9 +132,16 @@ def main() -> None:
         )
 
         logger.info("Inicializando bot...")
+        # Increase timeouts for video file uploads (defaults are too short
+        # for large video files on Render's limited upload bandwidth)
         app = (
             Application.builder()
             .token(BOT_TOKEN)
+            .write_timeout(120)
+            .media_write_timeout(300)
+            .read_timeout(120)
+            .pool_timeout(30)
+            .connect_timeout(30)
             .persistence(persistence)
             .build()
         )
