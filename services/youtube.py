@@ -186,11 +186,16 @@ def download_playlist_audio(url):
 
 
 def validate_cookies():
+    """Validate cookies and return a user-friendly message."""
     if not os.path.isfile(COOKIES_FILE):
         return False, "No hay cookies"
     ok, o, s = _run(["--simulate", "--print", "title", "--format", "best"] + SINGLE + ["https://www.youtube.com/watch?v=jNQXAC9IVRw"], 30)
-    if "Sign in" in s:
-        return False, "YOUTUBE_BLOCK"
+    if "Sign in" in s or "sign in" in s.lower():
+        lines = s.strip().split("\n")
+        # Return only the actual error line, not warnings
+        errors = [l for l in lines if "ERROR:" in l]
+        detail = errors[0] if errors else s[:200]
+        return False, "YOUTUBE_BLOCK: " + detail[:150]
     if ok and o.strip():
         return True, "OK"
     nl = chr(10)

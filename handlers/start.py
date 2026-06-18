@@ -62,12 +62,10 @@ async def cookies_command(up, ctx):
         ok, msg = await asyncio.to_thread(validate_cookies)
         if ok:
             await up.message.reply_text("✅ *Cookies OK.*", parse_mode="Markdown")
-        elif "ENV_ERROR" in msg:
-            await up.message.reply_text("❌ Error del servidor.")
-            logger.error("ENV_ERROR")
         else:
-            os.remove(COOKIES_FILE)
-            await up.message.reply_text("❌ Cookies invalidas: " + msg)
+            # Keep the file so user can retry without re-uploading
+            err_display = msg[:200]
+            await up.message.reply_text(f"❌ Cookies invalidas: {err_display}", parse_mode="Markdown")
     except Exception as e:
         logger.error("Error cookies: %s", e)
         await up.message.reply_text("❌ Error.")
