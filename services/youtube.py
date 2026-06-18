@@ -12,7 +12,7 @@ EJS_FLAGS = [
     "--remote-components", "ejs:npm",
 ]
 
-YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android,web"]
+YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android"]
 
 BASE = [
     "--no-warnings", "--quiet", "--no-mtime",
@@ -47,7 +47,8 @@ def _read_info(info_path: str) -> dict:
 
 
 def _run(args, timeout=240, progress_callback=None, use_ejs=True):
-    cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"]
+    cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress",
+           "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"]
     if os.path.isfile(COOKIES_FILE):
         cmd.extend(["--cookies", COOKIES_FILE])
     if use_ejs:
