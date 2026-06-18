@@ -52,7 +52,7 @@ def _run(args, timeout=240, progress_callback=None, use_ejs=True):
         cmd.extend(["--cookies", COOKIES_FILE])
     if use_ejs:
         cmd.extend(EJS_FLAGS)
-        cmd.extend(YT_EXTRACTOR)
+    cmd.extend(YT_EXTRACTOR)
     cmd.extend(args)
     try:
         if not progress_callback:
