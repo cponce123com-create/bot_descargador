@@ -11,6 +11,9 @@ YT_PL_RE = re.compile(r"list=([a-zA-Z0-9_-]+)", re.IGNORECASE)
 TT_RE = re.compile(r"(https?://)?(www\.)?(vm\.tiktok\.com|tiktok\.com)/", re.IGNORECASE)
 FB_RE = re.compile(r"(https?://)?(www\.|web\.|m\.)?(facebook\.com|fb\.watch)/", re.IGNORECASE)
 IG_RE = re.compile(r"(https?://)?(www\.)?(instagram\.com)/(p|reels|reel|tv)/", re.IGNORECASE)
+X_RE = re.compile(r"(https?://)?(www\.|x\.|twitter\.)?(com)/(.*)/status/", re.IGNORECASE)
+REDDIT_RE = re.compile(r"(https?://)?(www\.)?(reddit\.com|v\.redd\.it)/", re.IGNORECASE)
+PINTEREST_RE = re.compile(r"(https?://)?(www\.|id\.|pin\.)?(pinterest\.com|pin\.it)/", re.IGNORECASE)
 QUAL = {"video":"360p","vertical":"Vertical 9:16","audio":"MP3"}
 
 def _err(e):
@@ -20,10 +23,16 @@ def _err(e):
     return "❌ "+e[:100]
 
 def _cap(url,title,quality,plat):
-    if plat=="youtube": e = "✨📺 YouTube"
-    elif plat=="tiktok": e = "✨📺 TikTok"
-    elif plat=="facebook": e = "✨📺 Facebook"
-    else: e = "✨📸 Instagram"
+    m = {
+        "youtube": "✨📺 YouTube",
+        "tiktok": "✨📺 TikTok",
+        "facebook": "✨📺 Facebook",
+        "instagram": "✨📸 Instagram",
+        "x": "✨🐦 X (Twitter)",
+        "reddit": "✨🤖 Reddit",
+        "pinterest": "✨📌 Pinterest"
+    }
+    e = m.get(plat, "✨📺 Video")
     t = (title[:80]+"...") if title and len(title)>80 else (title or "Video")
     return f"{e}{chr(10)}"+"━"*25+f"{chr(10)}🔗 {url}{chr(10)}📝 {t}{chr(10)}📺 {quality}{chr(10)}📥 ¡Dale en guardar!"
 
@@ -32,6 +41,9 @@ def detect_platform(url):
     if TT_RE.search(url): return "tiktok"
     if FB_RE.search(url): return "facebook"
     if IG_RE.search(url): return "instagram"
+    if X_RE.search(url): return "x"
+    if REDDIT_RE.search(url): return "reddit"
+    if PINTEREST_RE.search(url): return "pinterest"
     return None
 
 async def handle_message(up, ctx):
@@ -41,13 +53,20 @@ async def handle_message(up, ctx):
     if p=="youtube": return await handle_youtube(up,ctx,t)
     if p=="tiktok": return await handle_tiktok(up,ctx,t)
     if p=="facebook": return await handle_facebook(up,ctx,t)
-    return await handle_instagram(up,ctx,t)
+    if p=="instagram": return await handle_instagram(up,ctx,t)
+    return await handle_generic(up,ctx,t,p)
 
 async def handle_youtube(up, ctx, url):
     from services.youtube import get_video_info
-    s = await up.message.reply_text("⏳ Analizando...")
+    from services.generic import get_info as get_generic_info
+    s = await up.message.reply_text("⏳ Analizando YouTube...")
     info = get_video_info(url)
     if not info: await s.edit_text("❌ No pude obtener info."); return ConversationHandler.END
+    
+    # Intentar obtener miniatura para mejorar UX
+    gen_info = await asyncio.to_thread(get_generic_info, url)
+    thumb = gen_info.get("thumbnail")
+    
     ctx.user_data["yt_url"]=url; ctx.user_data["yt_title"]=info["title"]
     t = info["title"][:50]+"..." if len(info["title"])>50 else info["title"]
     kb = [[InlineKeyboardButton("🎬 Video",callback_data="yt_video"),InlineKeyboardButton("📱 Vertical",callback_data="yt_vertical")],
@@ -57,7 +76,12 @@ async def handle_youtube(up, ctx, url):
         kb.append([InlineKeyboardButton("🎼 Playlist (Top 10 MP3)", callback_data="yt_playlist")])
         
     kb.append([InlineKeyboardButton("❌ Cancelar",callback_data="yt_cancel")])
-    await s.edit_text("📹 *"+t+"*"+chr(10)+"Selecciona:",parse_mode="Markdown",reply_markup=InlineKeyboardMarkup(kb))
+    
+    if thumb:
+        await up.message.reply_photo(thumb, caption="📹 *"+t+"*"+chr(10)+"Selecciona:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await s.delete()
+    else:
+        await s.edit_text("📹 *"+t+"*"+chr(10)+"Selecciona:",parse_mode="Markdown",reply_markup=InlineKeyboardMarkup(kb))
     return SELECTING_FORMAT
 
 async def handle_tiktok(up, ctx, url):
@@ -183,6 +207,44 @@ async def handle_instagram(up, ctx, url):
             await up.message.reply_video(
                 f, 
                 caption=_cap(url, title, "HD", "instagram"),
+                supports_streaming=True
+            )
+        await s.delete()
+    except Exception as e:
+        await s.edit_text(f"❌ Error al enviar: {str(e)[:50]}")
+    finally:
+        from services.file_utils import cleanup
+        cleanup(path)
+    return ConversationHandler.END
+
+async def handle_generic(up, ctx, url, plat):
+    from services.generic import get_info, download_generic
+    s = await up.message.reply_text(f"⏳ Analizando {plat.capitalize()}...")
+    info = await asyncio.to_thread(get_info, url)
+    title = info.get("title", "Video")
+    thumb = info.get("thumbnail")
+    
+    await s.edit_text(f"⏳ Descargando de {plat.capitalize()}...")
+    path, err = await asyncio.to_thread(download_generic, url, plat)
+    
+    if not path:
+        await s.edit_text(_err(err))
+        return ConversationHandler.END
+        
+    if os.path.getsize(path) > MAX_FILE_SIZE:
+        from services.file_utils import cleanup
+        cleanup(path)
+        await s.edit_text("❌ Archivo muy grande (>300MB).")
+        return ConversationHandler.END
+
+    try:
+        await s.edit_text("📤 Enviando...")
+        # Nota: reply_video thumbnail espera un archivo local o bytes, no una URL
+        # Para simplificar y evitar errores, enviamos sin thumbnail en el reply_video si es URL
+        with open(path, "rb") as f:
+            await up.message.reply_video(
+                f, 
+                caption=_cap(url, title, "HD", plat),
                 supports_streaming=True
             )
         await s.delete()
