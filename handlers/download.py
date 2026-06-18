@@ -121,6 +121,10 @@ async def _react(msg, emoji):
 
 
 async def handle_message(up, ctx):
+    from handlers.verify import require_channel, verify_prompt
+    if not await require_channel(up, ctx):
+        await verify_prompt(up, ctx)
+        return ConversationHandler.END
     if not await _require_auth(up): return ConversationHandler.END
     if not up.message:
         return ConversationHandler.END

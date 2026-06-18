@@ -39,3 +39,7 @@ ALLOWED_USER_IDS = _parse_int_list(os.getenv("ALLOWED_USER_IDS"))
 # Comma-separated Telegram user IDs allowed to upload cookies.
 # If empty or not set, only ALLOWED_USER_IDS can upload (or anyone if that's open).
 ADMIN_USER_IDS = _parse_int_list(os.getenv("ADMIN_USER_IDS"))
+
+# Optional channel that users must join before using the bot.
+# Set to the channel username (e.g., "@mychannel").
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL") or ""

@@ -31,6 +31,7 @@ from handlers.download import (
     cancel,
     SELECTING_FORMAT,
 )
+from handlers.verify import verify_callback
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,7 @@ def main() -> None:
         app.add_handler(CommandHandler("help", help_command))
         app.add_handler(CommandHandler("search", handle_search))
         app.add_handler(CommandHandler("cookies", cookies_command))
+        app.add_handler(CallbackQueryHandler(verify_callback, pattern=r"^verify_channel$"))
         app.add_handler(conv_handler)
         app.add_handler(MessageHandler(filters.Document.ALL, cookies_command))
 

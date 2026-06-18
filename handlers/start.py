@@ -18,6 +18,10 @@ def _is_admin(up: Update) -> bool:
     return True  # no restrictions set
 
 async def start(up, ctx):
+    from handlers.verify import require_channel, verify_prompt
+    if not await require_channel(up, ctx):
+        await verify_prompt(up, ctx)
+        return
     text = ("🎬 *Bot Descargador*" + chr(10) + chr(10)
         + "Envia enlace de **YouTube**, **TikTok**, **Facebook** o **Instagram**." + chr(10) + chr(10)
         + "/help | /cookies")
