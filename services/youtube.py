@@ -5,8 +5,8 @@ from config import DOWNLOAD_DIR, COOKIES_FILE
 logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist","--playlist-end","1"]
-# Use android client to bypass JS challenge on slim environments like Render.
-# You may also try "web" or "ios" if android still fails.
+# Use android client ONLY when NO cookies are available (avoids JS challenge).
+# When cookies exist, the web client works fine and has more format options.
 YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android"]
 BASE = [
     "--no-warnings",
@@ -28,8 +28,12 @@ def _cleanup():
             except: pass
 
 def _run(args, timeout=240, progress_callback=None):
-    cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"] + YT_EXTRACTOR
-    if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies", COOKIES_FILE])
+    cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"]
+    if os.path.isfile(COOKIES_FILE):
+        cmd.extend(["--cookies", COOKIES_FILE])
+    else:
+        # Only use android client when no cookies (avoids JS challenge in Render)
+        cmd.extend(YT_EXTRACTOR)
     cmd.extend(args)
     try:
         if not progress_callback:
@@ -89,57 +93,40 @@ def _convert_to_gif(path):
     except: pass
     return None
 
-def _try_download(uniq, formats, args, progress_callback, use_extractor, url):
-    """Try to download with the given formats and extractor setting."""
-    for fmt in formats:
-        o = os.path.join(DOWNLOAD_DIR, f"yt_{uniq}.%(ext)s")
-        if use_extractor:
-            ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url], progress_callback=progress_callback)
-        else:
-            # Retry without YT_EXTRACTOR (web client fallback)
-            cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline"]
-            if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies", COOKIES_FILE])
-            cmd.extend(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url])
-            if not progress_callback:
-                try:
-                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
-                    ok, sout, serr = r.returncode==0, r.stdout.strip(), r.stderr.strip()
-                except Exception as e:
-                    ok, sout, serr = False, "", str(e)
-            else:
-                ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url], progress_callback=progress_callback)
-        if ok:
-            for fn in os.listdir(DOWNLOAD_DIR):
-                if uniq in fn and os.path.isfile(fp := os.path.join(DOWNLOAD_DIR, fn)):
-                    return fp, ok
-        logger.info("Format %s (extractor=%s) failed: %s", fmt, use_extractor, serr[:150] if serr else "no error")
-    return None, False
-
 def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None, to_gif=False):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
-    # Extended format fallback list for Render's android client
+    # Use flexible format selectors that work with any YouTube client (no hardcoded IDs)
+    # yt-dlp will pick the best matching format automatically
     if format_id == "vertical":
-        f = ["best[height<=480]", "best", "worst", "18"]
+        # Best video+audio up to 480p, with many fallbacks
+        f = ["bestvideo[height<=480]+bestaudio/best[height<=480]/best"]
     elif format_id == "360":
-        f = ["best[height<=360]", "best", "worst", "18", "22", "136+140", "247+140"]
+        f = ["bestvideo[height<=360]+bestaudio/best[height<=360]/best"]
     else:
-        f = ["best[height<=720]", "best", "worst", "18", "22", "136+140", "247+140"]
+        f = ["bestvideo[height<=720]+bestaudio/best[height<=720]/best"]
     
     args = []
     if start_time and end_time:
         args.extend(["--download-sections", f"*{start_time}-{end_time}", "--force-keyframes-at-cuts"])
         
-    # Try with android client first, then fall back to default/web client
-    for use_extractor in (True, False):
-        fp, ok = _try_download(uniq, f, args, progress_callback, use_extractor, url)
-        if fp:
-            if to_gif: return _convert_to_gif(fp), ""
-            if format_id == "vertical": return _crop_vertical(fp) or fp, ""
-            return fp, ""
-        # If format discovery itself failed (not a specific format), fall back faster
-        if not ok:
-            continue
+    fp, ok = _try_download(uniq, f, args, progress_callback, url)
+    if fp:
+        if to_gif: return _convert_to_gif(fp), ""
+        if format_id == "vertical": return _crop_vertical(fp) or fp, ""
+        return fp, ""
     return None, "Error"
+
+def _try_download(uniq, formats, args, progress_callback, url):
+    """Try to download with the given formats. _run handles cookies vs android client."""
+    for fmt in formats:
+        o = os.path.join(DOWNLOAD_DIR, f"yt_{uniq}.%(ext)s")
+        ok, sout, serr = _run(["--format", fmt, "--output", o] + BASE + SINGLE + args + [url], progress_callback=progress_callback)
+        if ok:
+            for fn in os.listdir(DOWNLOAD_DIR):
+                if uniq in fn and os.path.isfile(fp := os.path.join(DOWNLOAD_DIR, fn)):
+                    return fp, ok
+        logger.info("Format %s failed: %s", fmt, serr[:150] if serr else "no error")
+    return None, False
 
 def download_audio(url, progress_callback=None):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
