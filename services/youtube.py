@@ -125,7 +125,12 @@ def download_playlist_audio(url):
 def validate_cookies():
     if not os.path.isfile(COOKIES_FILE): return False,"No hay cookies"
     ok,o,s = _run(["--simulate","--print","title","--format","best"]+SINGLE+["https://www.youtube.com/watch?v=jNQXAC9IVRw"],30)
-    if any(x in s.lower() for x in ["no video formats","no supported javascript"]): return False,"ENV_ERROR"
+    if "no supported javascript" in s.lower():
+        logger.warning("yt-dlp JS challenge not available, cookies may still work")
+        # Don't reject — the JS challenge failure is an environment limitation,
+        # not a cookies issue. Fall through to check if title was extracted.
+    elif "no video formats" in s.lower():
+        return False,"ENV_ERROR"
     if "Sign in" in s: return False,"YOUTUBE_BLOCK"
     if ok and o.strip(): return True,"OK"
     return False,s[:200] or "Error"
