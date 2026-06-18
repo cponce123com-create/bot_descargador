@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def start(up, ctx):
     text = ("🎬 *Bot Descargador*" + chr(10) + chr(10)
-        + "Envia enlace de **YouTube**, **TikTok** o **Facebook**." + chr(10) + chr(10)
+        + "Envia enlace de **YouTube**, **TikTok**, **Facebook** o **Instagram**." + chr(10) + chr(10)
         + "/help | /cookies")
     await up.message.reply_text(text, parse_mode="Markdown")
 
@@ -19,7 +19,8 @@ async def help_command(up, ctx):
         + "📱 480p - peso moderado" + chr(10)
         + "🎵 Audio - solo MP3" + chr(10)
         + "*TikTok:* envia URL, descarga sin marca de agua." + chr(10)
-+ "*Facebook:* envia URL para descargar videos o reels." + chr(10) + chr(10)
++ "*Facebook:* envia URL para descargar videos o reels." + chr(10)
++ "*Instagram:* envia URL de Reels o Posts." + chr(10) + chr(10)
         + "/cookies - cookies de YouTube (opcional)" + chr(10)
         + "Limite: 300MB por archivo")
     await up.message.reply_text(text, parse_mode="Markdown")

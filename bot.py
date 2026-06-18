@@ -15,6 +15,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
+    InlineQueryHandler,
     filters,
 )
 
@@ -26,6 +27,7 @@ from handlers.download import (
     cancel,
     SELECTING_FORMAT,
 )
+from handlers.inline import inline_query
 
 # Configurar logging
 logging.basicConfig(
@@ -108,6 +110,8 @@ def main() -> None:
         app.add_handler(conv_handler)
         # Handler para archivos .txt (cookies enviadas sin /cookies)
         app.add_handler(MessageHandler(filters.Document.ALL, cookies_command))
+        # Handler para modo inline
+        app.add_handler(InlineQueryHandler(inline_query))
 
         # Iniciar bot
         logger.info("Bot conectandose a Telegram...")

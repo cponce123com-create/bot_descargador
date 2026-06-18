@@ -10,6 +10,7 @@ YT_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECA
 YT_PL_RE = re.compile(r"list=([a-zA-Z0-9_-]+)", re.IGNORECASE)
 TT_RE = re.compile(r"(https?://)?(www\.)?(vm\.tiktok\.com|tiktok\.com)/", re.IGNORECASE)
 FB_RE = re.compile(r"(https?://)?(www\.|web\.|m\.)?(facebook\.com|fb\.watch)/", re.IGNORECASE)
+IG_RE = re.compile(r"(https?://)?(www\.)?(instagram\.com)/(p|reels|reel|tv)/", re.IGNORECASE)
 QUAL = {"video":"360p","vertical":"Vertical 9:16","audio":"MP3"}
 
 def _err(e):
@@ -21,7 +22,8 @@ def _err(e):
 def _cap(url,title,quality,plat):
     if plat=="youtube": e = "✨📺 YouTube"
     elif plat=="tiktok": e = "✨📺 TikTok"
-    else: e = "✨📺 Facebook"
+    elif plat=="facebook": e = "✨📺 Facebook"
+    else: e = "✨📸 Instagram"
     t = (title[:80]+"...") if title and len(title)>80 else (title or "Video")
     return f"{e}{chr(10)}"+"━"*25+f"{chr(10)}🔗 {url}{chr(10)}📝 {t}{chr(10)}📺 {quality}{chr(10)}📥 ¡Dale en guardar!"
 
@@ -29,6 +31,7 @@ def detect_platform(url):
     if YT_RE.search(url): return "youtube"
     if TT_RE.search(url): return "tiktok"
     if FB_RE.search(url): return "facebook"
+    if IG_RE.search(url): return "instagram"
     return None
 
 async def handle_message(up, ctx):
@@ -37,7 +40,8 @@ async def handle_message(up, ctx):
     cleanup_old_files()
     if p=="youtube": return await handle_youtube(up,ctx,t)
     if p=="tiktok": return await handle_tiktok(up,ctx,t)
-    return await handle_facebook(up,ctx,t)
+    if p=="facebook": return await handle_facebook(up,ctx,t)
+    return await handle_instagram(up,ctx,t)
 
 async def handle_youtube(up, ctx, url):
     from services.youtube import get_video_info
@@ -144,6 +148,41 @@ async def handle_facebook(up, ctx, url):
             await up.message.reply_video(
                 f, 
                 caption=_cap(url, title, "HD", "facebook"),
+                supports_streaming=True
+            )
+        await s.delete()
+    except Exception as e:
+        await s.edit_text(f"❌ Error al enviar: {str(e)[:50]}")
+    finally:
+        from services.file_utils import cleanup
+        cleanup(path)
+    return ConversationHandler.END
+
+async def handle_instagram(up, ctx, url):
+    from services.instagram import get_instagram_info, download_instagram
+    s = await up.message.reply_text("⏳ Analizando Instagram...")
+    info = await asyncio.to_thread(get_instagram_info, url)
+    title = info.get("title", "Instagram Post")
+    
+    await s.edit_text("⏳ Descargando contenido de Instagram...")
+    path, err = await asyncio.to_thread(download_instagram, url)
+    
+    if not path:
+        await s.edit_text(_err(err))
+        return ConversationHandler.END
+        
+    if os.path.getsize(path) > MAX_FILE_SIZE:
+        from services.file_utils import cleanup
+        cleanup(path)
+        await s.edit_text("❌ Archivo muy grande (>300MB).")
+        return ConversationHandler.END
+
+    try:
+        await s.edit_text("📤 Enviando...")
+        with open(path, "rb") as f:
+            await up.message.reply_video(
+                f, 
+                caption=_cap(url, title, "HD", "instagram"),
                 supports_streaming=True
             )
         await s.delete()
