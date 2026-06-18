@@ -3,8 +3,19 @@
 import os, logging, asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
-from config import COOKIES_FILE
+from config import COOKIES_FILE, ADMIN_USER_IDS, ALLOWED_USER_IDS
 logger = logging.getLogger(__name__)
+
+def _is_admin(up: Update) -> bool:
+    """Check if the user is allowed to upload cookies."""
+    uid = up.effective_user.id if up.effective_user else None
+    if not uid:
+        return False
+    if ADMIN_USER_IDS is not None:
+        return uid in ADMIN_USER_IDS
+    if ALLOWED_USER_IDS is not None:
+        return uid in ALLOWED_USER_IDS
+    return True  # no restrictions set
 
 async def start(up, ctx):
     text = ("🎬 *Bot Descargador*" + chr(10) + chr(10)
@@ -22,13 +33,19 @@ async def help_command(up, ctx):
 + "*Facebook:* envia URL para descargar videos o reels." + chr(10)
 + "*Instagram:* Reels o Posts." + chr(10)
 + "*X/Twitter, Reddit, Pinterest:* envia URL del video." + chr(10) + chr(10)
-+ "✂️ *Recorte:* Envia `00:10-00:20` junto al link para recortar." + chr(10) + chr(10)
++ "*Recorte:* Envia `00:10-00:20` junto al link para recortar." + chr(10) + chr(10)
         + "/cookies - cookies de YouTube (opcional)" + chr(10)
         + "Limite: 300MB por archivo")
     await up.message.reply_text(text, parse_mode="Markdown")
 
 async def cookies_command(up, ctx):
     from services.youtube import validate_cookies
+
+    # Admin-only check
+    if not _is_admin(up):
+        await up.message.reply_text("❌ Solo el admin puede cargar cookies.")
+        return
+
     if not up.message.document:
         t = ("🍪 *Cookies*" + chr(10) + chr(10)
             + "Si YouTube bloquea, exporta cookies con *Get cookies.txt*" + chr(10)
@@ -36,12 +53,21 @@ async def cookies_command(up, ctx):
         await up.message.reply_text(t, parse_mode="Markdown", disable_web_page_preview=True)
         return
     doc = up.message.document
-    if not doc.file_name.endswith(".txt"): await up.message.reply_text("❌ Archivo .txt."); return
+    if not doc.file_name.endswith(".txt"):
+        await up.message.reply_text("❌ Archivo .txt.")
+        return
     await up.message.reply_text("⏳ Validando cookies...")
     try:
         f = await doc.get_file(); await f.download_to_drive(COOKIES_FILE)
         ok, msg = await asyncio.to_thread(validate_cookies)
-        if ok: await up.message.reply_text("✅ *Cookies OK.*", parse_mode="Markdown")
-        elif "ENV_ERROR" in msg: await up.message.reply_text("❌ Error del servidor."); logger.error("ENV_ERROR")
-        else: os.remove(COOKIES_FILE); await up.message.reply_text("❌ Cookies invalidas: " + msg)
-    except Exception as e: logger.error("Error cookies: %s", e); await up.message.reply_text("❌ Error.")
+        if ok:
+            await up.message.reply_text("✅ *Cookies OK.*", parse_mode="Markdown")
+        elif "ENV_ERROR" in msg:
+            await up.message.reply_text("❌ Error del servidor.")
+            logger.error("ENV_ERROR")
+        else:
+            os.remove(COOKIES_FILE)
+            await up.message.reply_text("❌ Cookies invalidas: " + msg)
+    except Exception as e:
+        logger.error("Error cookies: %s", e)
+        await up.message.reply_text("❌ Error.")

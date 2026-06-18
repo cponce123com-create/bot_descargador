@@ -3,11 +3,22 @@
 import os, re, asyncio, logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
-from config import MAX_FILE_SIZE
+from config import MAX_FILE_SIZE, ALLOWED_USER_IDS
 from services.file_utils import cleanup, cleanup_old_files
 
 logger = logging.getLogger(__name__)
 SELECTING_FORMAT = 1
+
+
+async def _require_auth(up: Update) -> bool:
+    """Check if user is authorized. Returns False if blocked."""
+    if ALLOWED_USER_IDS is None:
+        return True
+    uid = up.effective_user.id if up.effective_user else None
+    if uid and uid in ALLOWED_USER_IDS:
+        return True
+    logger.info("Blocked uid=%s", uid)
+    return False
 
 YT_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
 YT_PL_RE = re.compile(r"list=([a-zA-Z0-9_-]+)", re.IGNORECASE)
@@ -43,6 +54,7 @@ def detect_platform(url):
     return None
 
 async def handle_search(up, ctx):
+    if not await _require_auth(up): return
     query = " ".join(ctx.args)
     if not query: await up.message.reply_text("❌ Uso: /search [termino]"); return
     s = await up.message.reply_text(f"🔍 Buscando '{query}'...")
@@ -55,6 +67,7 @@ async def handle_search(up, ctx):
     await s.edit_text("🎯 Resultados:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def handle_message(up, ctx):
+    if not await _require_auth(up): return ConversationHandler.END
     t = up.message.text.strip(); p = detect_platform(t)
     trim_match = re.search(r"(\d{1,2}:\d{2})-(\d{1,2}:\d{2})", t)
     if trim_match:
@@ -191,26 +204,33 @@ async def handle_generic_download(up, ctx):
         from services.youtube import download_video, download_audio
         q = up.callback_query; await q.answer(); c = q.data
         url = ctx.user_data.get("gen_url"); title = ctx.user_data.get("gen_title", "Video")
-        plat = c.split("_")[-1]; msg = await q.edit_message_text("⏳ Iniciando...")
+        plat = c.split("_")[-1]
+        # Send new status message (photo-safe)
+        status = await q.message.reply_text("⏳ Descargando...")
         def progress(p):
             try:
-                bar = "█" * int(p//10) + "░" * (10 - int(p//10))
                 loop = asyncio.get_event_loop()
-                asyncio.run_coroutine_threadsafe(msg.edit_text(f"⏳ Procesando: {bar} {p}%"), loop)
+                asyncio.run_coroutine_threadsafe(status.edit_text(f"⏳ {p:.0f}%"), loop)
             except: pass
-        
+
         trim = ctx.user_data.get("trim")
         if "_audio_" in c: path, err = await asyncio.to_thread(download_audio, url, progress)
         elif "_gif_" in c: path, err = await asyncio.to_thread(download_video, url, to_gif=True, progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
         else: path, err = await asyncio.to_thread(download_generic, url, plat, progress)
-        
+
         if path:
+            sz = os.path.getsize(path)
+            if sz > MAX_FILE_SIZE:
+                cleanup(path)
+                await status.edit_text(f"❌ Excede {MAX_FILE_SIZE//1024//1024}MB.")
+                return ConversationHandler.END
             with open(path, "rb") as f:
-                if "_audio_" in c: await q.message.reply_audio(f, caption=_cap(url, title, "MP3", plat))
-                elif "_gif_" in c: await q.message.reply_animation(f, caption=_cap(url, title, "GIF", plat))
-                else: await q.message.reply_video(f, caption=_cap(url, title, "HD", plat), supports_streaming=True)
-            await q.delete_message(); cleanup(path)
-        else: await q.edit_message_text(_err(err))
+                if "_audio_" in c: await status.reply_audio(f, caption=_cap(url, title, "MP3", plat))
+                elif "_gif_" in c: await status.reply_animation(f, caption=_cap(url, title, "GIF", plat))
+                else: await status.reply_video(f, caption=_cap(url, title, "HD", plat), supports_streaming=True)
+            cleanup(path)
+        else:
+            await status.edit_text(_err(err))
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"Error en handle_generic_download: {e}")

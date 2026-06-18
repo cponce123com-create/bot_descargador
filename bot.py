@@ -2,6 +2,7 @@
 Bot de Telegram para descargar videos.
 Punto de entrada principal.
 """
+import asyncio
 import logging
 import os
 import sys
@@ -14,13 +15,12 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
-    InlineQueryHandler,
     PicklePersistence,
     filters,
 )
 from telegram.ext._basepersistence import PersistenceInput
 
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ALLOWED_USER_IDS
 from handlers.start import start, help_command, cookies_command
 from handlers.download import (
     handle_message,
@@ -30,9 +30,12 @@ from handlers.download import (
     cancel,
     SELECTING_FORMAT,
 )
-from handlers.inline import inline_query
 
 logger = logging.getLogger(__name__)
+
+# Global concurrency limiter: max 2 concurrent downloads (safe for a small VPS).
+# Acquired in handlers that call yt-dlp/ffmpeg subprocesses.
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 
 
 def start_http_server():
@@ -61,10 +64,22 @@ def start_http_server():
         sys.stdout.flush()
 
 
+async def _auth_guard(up: Update, ctx) -> bool:
+    """Reject updates from unauthorized users. Returns False if blocked."""
+    if ALLOWED_USER_IDS is None:
+        return True  # no restrictions
+    uid = up.effective_user.id if up.effective_user else None
+    if uid and uid in ALLOWED_USER_IDS:
+        return True
+    # Silently ignore unauthorized users (no reply to avoid leaking the bot)
+    logger.info("Blocked update from uid=%s", uid)
+    return False
+
+
 async def orphan_callback(up: Update, ctx):
-    """Maneja callbacks cuando el estado del ConversationHandler se pierde
-    (ej: reinicio del bot en Render). Envia mensaje nuevo porque el
-    mensaje original puede ser una foto sin texto editable."""
+    """Maneja callbacks cuando el estado del ConversationHandler se pierde."""
+    if not await _auth_guard(up, ctx):
+        return
     q = up.callback_query
     await q.answer()
     await q.message.reply_text(
@@ -96,8 +111,6 @@ def main() -> None:
             stream=sys.stdout,
         )
 
-        # Persistencia para mantener estado entre reinicios
-        # on_flush=True guarda estado inmediatamente, no cada 60s
         store_input = PersistenceInput(user_data=True, chat_data=True, bot_data=False)
         persistence = PicklePersistence(
             filepath="bot_data.pkl",
@@ -113,6 +126,9 @@ def main() -> None:
             .build()
         )
 
+        # Make semaphore accessible to handlers
+        app.bot_data["download_sem"] = DOWNLOAD_SEMAPHORE
+
         conv_handler = ConversationHandler(
             entry_points=[
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
@@ -126,7 +142,6 @@ def main() -> None:
             fallbacks=[
                 CommandHandler("cancel", cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
-                # Si el estado se pierde, el fallback responde
                 CallbackQueryHandler(orphan_callback, pattern=r"^(yt_|gen_)"),
             ],
         )
@@ -137,12 +152,10 @@ def main() -> None:
         app.add_handler(CommandHandler("cookies", cookies_command))
         app.add_handler(conv_handler)
         app.add_handler(MessageHandler(filters.Document.ALL, cookies_command))
-        app.add_handler(InlineQueryHandler(inline_query))
 
         logger.info("Bot conectandose a Telegram...")
         sys.stdout.flush()
         print("Bot descargador iniciado.", flush=True)
-        # drop_pending_updates evita conflictos 409 al reiniciar
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
