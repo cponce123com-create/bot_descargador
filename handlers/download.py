@@ -50,7 +50,7 @@ def _cap(url,title,quality,plat):
     m = {"youtube":"✨📺 YouTube","tiktok":"✨📺 TikTok","facebook":"✨📺 Facebook","instagram":"✨📸 Instagram","x":"✨🐦 X","reddit":"✨🤖 Reddit","pinterest":"✨📌 Pinterest"}
     e = m.get(plat, "✨📺 Video")
     t = _escape_md(title[:80] + "...") if title and len(title)>80 else _escape_md(title or "Video")
-    return f"{e}\n━"*10 + f"\n🔗 {url}\n📝 {t}\n📺 {quality}\n📥 ¡Guardado!"
+    return f"{e}\n" + "━" * 25 + f"\n🔗 {url}\n📝 {t}\n📺 {quality}\n📥 ¡Guardado!"
 
 def detect_platform(url):
     if YT_RE.search(url): return "youtube"
