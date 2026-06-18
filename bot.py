@@ -63,13 +63,13 @@ def start_http_server():
 
 async def orphan_callback(up: Update, ctx):
     """Maneja callbacks cuando el estado del ConversationHandler se pierde
-    (ej: reinicio del bot en Render)."""
+    (ej: reinicio del bot en Render). Envia mensaje nuevo porque el
+    mensaje original puede ser una foto sin texto editable."""
     q = up.callback_query
     await q.answer()
-    await q.edit_message_text(
+    await q.message.reply_text(
         "La sesion expiro. Envia el enlace de nuevo para descargar."
     )
-    return ConversationHandler.END
 
 
 def main() -> None:
@@ -97,10 +97,12 @@ def main() -> None:
         )
 
         # Persistencia para mantener estado entre reinicios
+        # on_flush=True guarda estado inmediatamente, no cada 60s
         store_input = PersistenceInput(user_data=True, chat_data=True, bot_data=False)
         persistence = PicklePersistence(
             filepath="bot_data.pkl",
             store_data=store_input,
+            on_flush=True,
         )
 
         logger.info("Inicializando bot...")
@@ -125,8 +127,6 @@ def main() -> None:
                 CommandHandler("cancel", cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
             ],
-            name="descarga_conversation",
-            persistent=True,
         )
 
         # Handler para callbacks huerfanos
@@ -146,7 +146,11 @@ def main() -> None:
         logger.info("Bot conectandose a Telegram...")
         sys.stdout.flush()
         print("Bot descargador iniciado.", flush=True)
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        # drop_pending_updates evita conflictos 409 al reiniciar
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
 
     except Exception as e:
         logger.exception("Error fatal: %s", e)
