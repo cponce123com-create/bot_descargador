@@ -72,7 +72,7 @@ async def handle_youtube(up, ctx, url):
     from services.youtube import get_video_info
     from services.generic import get_info as get_generic_info
     s = await up.message.reply_text("⏳ Analizando...")
-    info = get_video_info(url)
+    info = await asyncio.to_thread(get_video_info, url)
     gen_info = await asyncio.to_thread(get_generic_info, url)
     thumb = gen_info.get("thumbnail")
     ctx.user_data["yt_url"]=url; ctx.user_data["yt_title"]=info["title"]

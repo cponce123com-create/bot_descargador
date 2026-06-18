@@ -126,12 +126,9 @@ def main() -> None:
             fallbacks=[
                 CommandHandler("cancel", cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
+                # Si el estado se pierde, el fallback responde
+                CallbackQueryHandler(orphan_callback, pattern=r"^(yt_|gen_)"),
             ],
-        )
-
-        # Handler para callbacks huerfanos
-        orphan_handler = CallbackQueryHandler(
-            orphan_callback, pattern=r"^(yt_|gen_)"
         )
 
         app.add_handler(CommandHandler("start", start))
@@ -141,7 +138,6 @@ def main() -> None:
         app.add_handler(conv_handler)
         app.add_handler(MessageHandler(filters.Document.ALL, cookies_command))
         app.add_handler(InlineQueryHandler(inline_query))
-        app.add_handler(orphan_handler)
 
         logger.info("Bot conectandose a Telegram...")
         sys.stdout.flush()
