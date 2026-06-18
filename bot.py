@@ -1,8 +1,7 @@
 """
-Bot de Telegram para descargar videos de YouTube y TikTok.
+Bot de Telegram para descargar videos.
 Punto de entrada principal.
 """
-
 import logging
 import os
 import sys
@@ -16,6 +15,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     InlineQueryHandler,
+    PicklePersistence,
     filters,
 )
 
@@ -31,17 +31,11 @@ from handlers.download import (
 )
 from handlers.inline import inline_query
 
-# Configurar logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    stream=sys.stdout,
-)
 logger = logging.getLogger(__name__)
 
 
 def start_http_server():
-    """Servidor HTTP mínimo para health checks de Render."""
+    """Servidor HTTP para health checks de Render."""
     import http.server
 
     PORT = int(os.environ.get("PORT", 8080))
@@ -54,7 +48,7 @@ def start_http_server():
             self.wfile.write(b"Bot running")
 
         def log_message(self, fmt, *args):
-            pass  # Silenciar logs del HTTP server
+            pass
 
     try:
         server = http.server.HTTPServer(("0.0.0.0", PORT), HealthHandler)
@@ -66,34 +60,61 @@ def start_http_server():
         sys.stdout.flush()
 
 
+async def orphan_callback(up: Update, ctx):
+    """Maneja callbacks cuando el estado del ConversationHandler se pierde
+    (ej: reinicio del bot en Render)."""
+    q = up.callback_query
+    await q.answer()
+    await q.edit_message_text(
+        "La sesion expiro. Envia el enlace de nuevo para descargar."
+    )
+    return ConversationHandler.END
+
+
 def main() -> None:
-    """Inicializa y arranca el bot."""
+    """Inicializa el bot con persistencia de estado."""
     try:
         if not BOT_TOKEN:
-            msg = "BOT_TOKEN no configurado. Agrega la variable de entorno en Render."
+            msg = "BOT_TOKEN no configurado."
             logger.error(msg)
             print(msg, file=sys.stderr)
             sys.stderr.flush()
             sys.exit(1)
 
-        # Crear directorio de descargas
         os.makedirs("downloads", exist_ok=True)
 
-        # Iniciar servidor HTTP primero (para Render)
         http_thread = threading.Thread(target=start_http_server, daemon=True)
         http_thread.start()
 
-        # Pequeña pausa para que el servidor HTTP se inicie
         import time
         time.sleep(0.5)
 
-        # Crear la aplicación
-        logger.info("Inicializando bot...")
-        app = Application.builder().token(BOT_TOKEN).build()
+        logging.basicConfig(
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            level=logging.INFO,
+            stream=sys.stdout,
+        )
 
-        # ConversationHandler para descargas
+        # Persistencia para mantener estado entre reinicios
+        persistence = PicklePersistence(
+            filepath="bot_data.pkl",
+            store_user_data=True,
+            store_chat_data=True,
+            store_bot_data=False,
+        )
+
+        logger.info("Inicializando bot...")
+        app = (
+            Application.builder()
+            .token(BOT_TOKEN)
+            .persistence(persistence)
+            .build()
+        )
+
         conv_handler = ConversationHandler(
-            entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
+            entry_points=[
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+            ],
             states={
                 SELECTING_FORMAT: [
                     CallbackQueryHandler(format_callback, pattern=r"^yt_"),
@@ -104,27 +125,31 @@ def main() -> None:
                 CommandHandler("cancel", cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
             ],
+            name="descarga_conversation",
+            persistent=True,
         )
 
-        # Registrar handlers
+        # Handler para callbacks huerfanos
+        orphan_handler = CallbackQueryHandler(
+            orphan_callback, pattern=r"^(yt_|gen_)"
+        )
+
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("help", help_command))
         app.add_handler(CommandHandler("search", handle_search))
         app.add_handler(CommandHandler("cookies", cookies_command))
         app.add_handler(conv_handler)
-        # Handler para archivos .txt (cookies enviadas sin /cookies)
         app.add_handler(MessageHandler(filters.Document.ALL, cookies_command))
-        # Handler para modo inline
         app.add_handler(InlineQueryHandler(inline_query))
+        app.add_handler(orphan_handler)
 
-        # Iniciar bot
         logger.info("Bot conectandose a Telegram...")
         sys.stdout.flush()
-        print("🤖 Bot descargador iniciado.", flush=True)
+        print("Bot descargador iniciado.", flush=True)
         app.run_polling(allowed_updates=Update.ALL_TYPES)
 
     except Exception as e:
-        logger.exception("Error fatal al iniciar el bot: %s", e)
+        logger.exception("Error fatal: %s", e)
         print(f"ERROR: {e}", file=sys.stderr, flush=True)
         sys.exit(1)
 

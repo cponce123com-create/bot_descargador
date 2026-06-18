@@ -102,9 +102,14 @@ async def handle_tiktok(up, ctx, url):
     await s.edit_text("❌ Error."); return ConversationHandler.END
 
 async def format_callback(up, ctx):
+    q = up.callback_query
+    c = q.data
+    # Siempre responder al callback primero (antes de cualquier operacion)
+    await q.answer()
+    path = None
+
     try:
         from services.youtube import download_video, download_audio
-        q = up.callback_query; await q.answer(); c = q.data
         if c.startswith("yt_search_"):
             url = f"https://www.youtube.com/watch?v={c.replace('yt_search_', '')}"
             await q.message.delete(); return await handle_youtube(up, ctx, url)
@@ -138,12 +143,17 @@ async def format_callback(up, ctx):
                 if c=="yt_audio": await q.message.reply_audio(f, caption=_cap(url,title,"MP3","youtube"))
                 elif c=="yt_gif": await q.message.reply_animation(f, caption=_cap(url,title,"GIF","youtube"))
                 else: await q.message.reply_video(f, caption=_cap(url,title,QUAL.get(c,"HD"),"youtube"), supports_streaming=True)
-            await q.delete_message(); cleanup(path)
+            await q.delete_message(); cleanup(path); path = None
         else: await q.edit_message_text(_err(err))
-        return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Error en format_callback: {e}")
-        return ConversationHandler.END
+        logger.exception("Error en format_callback")
+        try:
+            await q.edit_message_text(f"❌ Error critico. Reintenta.")
+        except Exception:
+            pass
+    finally:
+        if path: cleanup(path)
+    return ConversationHandler.END
 
 async def handle_facebook(up, ctx, url):
     ctx.user_data["gen_url"] = url; ctx.user_data["gen_title"] = "Facebook Video"
