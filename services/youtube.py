@@ -45,58 +45,54 @@ def validate_cookies():
     return False,s[:200] or "Error"
 
 def _crop_vertical(path):
+    """Cropea video a formato vertical 9:16 centrado usando ffmpeg."""
     try:
         out = os.path.join(DOWNLOAD_DIR, f"vert_{uuid.uuid4().hex[:8]}.mp4")
+        # Obtener dimensiones
         r = subprocess.run(["ffprobe","-v","error","-select_streams","v:0",
                           "-show_entries","stream=width,height","-of","csv=p=0",path],
                           capture_output=True,text=True,timeout=30)
         if r.returncode!=0 or not r.stdout.strip():
             logger.warning("ffprobe fail: %s",r.stderr[:100]); return None
+        
         parts = r.stdout.strip().split(",")
         if len(parts)!=2: return None
         w, h = int(parts[0]), int(parts[1])
+        
+        # Calcular crop para 9:16 (vertical)
         new_w = int(h * 9 / 16)
         if new_w > w:
             new_w = w; new_h = int(w * 16 / 9); y_off = (h - new_h) // 2; x_off = 0
         else:
             new_h = h; x_off = (w - new_w) // 2; y_off = 0
-        new_w = new_w - (new_w % 2)  # Asegurar par
+            
+        new_w = new_w - (new_w % 2)  # Asegurar par para compatibilidad de codecs
+        new_h = new_h - (new_h % 2)
         if new_w < 2: new_w = 2
+        if new_h < 2: new_h = 2
+        
+        # Usar libx264 para mejor compatibilidad con Telegram
         cmd = ["ffmpeg","-y","-nostdin","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}",
-               "-c:v","mpeg4","-qscale:v","3","-c:a","aac","-b:a","64k",out]
-        logger.info("Cropping %dx%d -> %dx%d (ultrafast)",w,h,new_w,new_h)
+               "-c:v","libx264","-preset","ultrafast","-crf","23","-c:a","aac","-b:a","128k",out]
+        
+        logger.info("Cropping %dx%d -> %dx%d",w,h,new_w,new_h)
         r = subprocess.run(cmd,capture_output=True,text=True,timeout=300)
+        
         if r.returncode==0 and os.path.isfile(out) and os.path.getsize(out)>1024:
             os.remove(path); logger.info("Vertical crop OK"); return out
         logger.warning("ffmpeg fail: %s",r.stderr[:200])
     except Exception as e:
         logger.error("Crop exception: %s",e)
     return None
-    """Cropea video a formato vertical 9:16 centrado usando ffmpeg."""
-    out = os.path.join(DOWNLOAD_DIR, f"vert_{uuid.uuid4().hex[:8]}.mp4")
-    # Obtener dimensiones
-    r = subprocess.run(["ffprobe","-v","error","-select_streams","v:0","-show_entries","stream=width,height","-of","csv=p=0",path],
-                      capture_output=True,text=True,timeout=15)
-    if r.returncode!=0: return None
-    parts = r.stdout.strip().split(",")
-    if len(parts)!=2: return None
-    w, h = int(parts[0]), int(parts[1])
-    # Calcular crop para 9:16 (vertical)
-    new_w = int(h * 9 / 16)
-    if new_w > w: new_w = w; new_h = int(w * 16 / 9); y_off = (h - new_h) // 2; x_off = 0
-    else: new_h = h; x_off = (w - new_w) // 2; y_off = 0
-    cmd = ["ffmpeg","-y","-i",path,"-vf",f"crop={new_w}:{new_h}:{x_off}:{y_off}","-c:a","copy",out]
-    r = subprocess.run(cmd,capture_output=True,text=True,timeout=60)
-    if r.returncode==0 and os.path.isfile(out) and os.path.getsize(out)>1024:
-        os.remove(path); return out
-    return None
 
 def download_video(url, format_id="360"):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     if format_id=="vertical":
-        f = ["best[height<=480]","bestvideo[height<=480]+bestaudio","worst","18","best"]
+        # Para vertical, intentamos obtener una calidad decente para recortar
+        f = ["bestvideo[height<=720]+bestaudio/best[height<=720]","best[height<=480]","worst","18","best"]
     else:
         f = ["best[height<=360]","bestvideo[height<=360]+bestaudio","worst","18","best"]
+        
     last = ""
     for fmt in f:
         o = os.path.join(DOWNLOAD_DIR,f"yt_%(id)s_{uniq}.%(ext)s")
