@@ -132,3 +132,24 @@ def download_audio(url):
             if uniq in fn and fn.endswith(".mp3") and os.path.getsize(fp:=os.path.join(DOWNLOAD_DIR,fn))>1024:
                 return fp,""
     return None,serr[:100] or "Error"
+
+def download_playlist_audio(url):
+    """Descarga las primeras 10 canciones de una playlist en MP3."""
+    _cleanup(); uniq = uuid.uuid4().hex[:8]
+    # Usar --playlist-items 1-10 para limitar la descarga
+    o = os.path.join(DOWNLOAD_DIR, f"pl_{uniq}_%(playlist_index)s.%(ext)s")
+    pl_args = ["--playlist-items", "1-10", "--extract-audio", "--audio-format", "mp3", "--output", o]
+    
+    ok, sout, serr = _run(pl_args + BASE + [url], timeout=600) # Más timeout para playlists
+    
+    downloaded_files = []
+    if ok:
+        for fn in sorted(os.listdir(DOWNLOAD_DIR)):
+            if f"pl_{uniq}_" in fn and fn.endswith(".mp3"):
+                fp = os.path.join(DOWNLOAD_DIR, fn)
+                if os.path.getsize(fp) > 1024:
+                    downloaded_files.append(fp)
+    
+    if downloaded_files:
+        return downloaded_files, ""
+    return None, serr[:100] or "Error"

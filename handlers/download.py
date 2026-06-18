@@ -7,6 +7,7 @@ from config import MAX_FILE_SIZE
 from services.file_utils import cleanup, cleanup_old_files
 SELECTING_FORMAT = 1
 YT_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
+YT_PL_RE = re.compile(r"list=([a-zA-Z0-9_-]+)", re.IGNORECASE)
 TT_RE = re.compile(r"(https?://)?(www\.)?(vm\.tiktok\.com|tiktok\.com)/", re.IGNORECASE)
 FB_RE = re.compile(r"(https?://)?(www\.|web\.|m\.)?(facebook\.com|fb\.watch)/", re.IGNORECASE)
 QUAL = {"video":"360p","vertical":"Vertical 9:16","audio":"MP3"}
@@ -46,8 +47,12 @@ async def handle_youtube(up, ctx, url):
     ctx.user_data["yt_url"]=url; ctx.user_data["yt_title"]=info["title"]
     t = info["title"][:50]+"..." if len(info["title"])>50 else info["title"]
     kb = [[InlineKeyboardButton("🎬 Video",callback_data="yt_video"),InlineKeyboardButton("📱 Vertical",callback_data="yt_vertical")],
-          [InlineKeyboardButton("🎵 Audio",callback_data="yt_audio")],
-          [InlineKeyboardButton("❌ Cancelar",callback_data="yt_cancel")]]
+          [InlineKeyboardButton("🎵 Audio",callback_data="yt_audio")]]
+    
+    if YT_PL_RE.search(url):
+        kb.append([InlineKeyboardButton("🎼 Playlist (Top 10 MP3)", callback_data="yt_playlist")])
+        
+    kb.append([InlineKeyboardButton("❌ Cancelar",callback_data="yt_cancel")])
     await s.edit_text("📹 *"+t+"*"+chr(10)+"Selecciona:",parse_mode="Markdown",reply_markup=InlineKeyboardMarkup(kb))
     return SELECTING_FORMAT
 
@@ -78,6 +83,26 @@ async def format_callback(up, ctx):
     if c=="yt_cancel": await q.edit_message_text("✅ Cancelado."); return ConversationHandler.END
     if not url: await q.edit_message_text("❌ URL perdida."); return ConversationHandler.END
     await q.edit_message_text("⏳ Descargando...")
+    if c=="yt_playlist":
+        from services.youtube import download_playlist_audio
+        await q.edit_message_text("⏳ Descargando playlist (máx 10 canciones)...")
+        paths, err = await asyncio.to_thread(download_playlist_audio, url)
+        if not paths:
+            await q.edit_message_text(_err(err))
+            return ConversationHandler.END
+        
+        await q.edit_message_text(f"📤 Enviando {len(paths)} canciones...")
+        for p in paths:
+            try:
+                with open(p, "rb") as f:
+                    await q.message.reply_audio(f)
+            except: pass
+            finally:
+                from services.file_utils import cleanup
+                cleanup(p)
+        await q.delete_message()
+        return ConversationHandler.END
+
     if c=="yt_audio": path,err = await asyncio.to_thread(download_audio,url)
     else: path,err = await asyncio.to_thread(download_video,url,("vertical" if c=="yt_vertical" else "360"))
     if not path: await q.edit_message_text(_err(err)); return ConversationHandler.END
