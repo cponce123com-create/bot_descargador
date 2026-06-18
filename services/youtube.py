@@ -5,6 +5,9 @@ from config import DOWNLOAD_DIR, COOKIES_FILE
 logger = logging.getLogger(__name__); YT = "yt-dlp"
 
 SINGLE = ["--no-playlist","--playlist-end","1"]
+# Use android client to bypass JS challenge on slim environments like Render.
+# You may also try "web" or "ios" if android still fails.
+YT_EXTRACTOR = ["--extractor-args", "youtube:player_client=android"]
 BASE = [
     "--no-warnings",
     "--quiet",
@@ -25,7 +28,7 @@ def _cleanup():
             except: pass
 
 def _run(args, timeout=240, progress_callback=None):
-    cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"]
+    cmd = [YT, "--no-check-certificates", "--no-cache-dir", "--newline", "--progress"] + YT_EXTRACTOR
     if os.path.isfile(COOKIES_FILE): cmd.extend(["--cookies", COOKIES_FILE])
     cmd.extend(args)
     try:
@@ -88,8 +91,13 @@ def _convert_to_gif(path):
 
 def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None, to_gif=False):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
-    f = ["bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]", "best[height<=720]", "18"]
-    if format_id == "360": f = ["best[height<=360][ext=mp4]", "18"]
+    # Extended format fallback list for Render's android client
+    if format_id == "vertical":
+        f = ["best[height<=480]", "best", "worst", "18"]
+    elif format_id == "360":
+        f = ["best[height<=360]", "best", "worst", "18", "22", "136+140", "247+140"]
+    else:
+        f = ["best[height<=720]", "best", "worst", "18", "22", "136+140", "247+140"]
     
     args = []
     if start_time and end_time:
@@ -104,15 +112,18 @@ def download_video(url, format_id="360", progress_callback=None, start_time=None
                     if to_gif: return _convert_to_gif(fp), ""
                     if format_id == "vertical": return _crop_vertical(fp) or fp, ""
                     return fp, ""
+        # Log which format failed so we can debug
+        logger.info("Format %s failed: %s", fmt, serr[:100] if serr else "no error")
     return None, "Error"
 
 def download_audio(url, progress_callback=None):
     _cleanup(); uniq = uuid.uuid4().hex[:8]
     o = os.path.join(DOWNLOAD_DIR, f"audio_{uniq}.%(ext)s")
-    ok, sout, serr = _run(["--format", "bestaudio/best", "--extract-audio", "--audio-format", "mp3", "--output", o] + BASE + SINGLE + [url], progress_callback=progress_callback)
+    ok, sout, serr = _run(["--format", "bestaudio[ext=m4a]/bestaudio/best", "--extract-audio", "--audio-format", "mp3", "--output", o] + BASE + SINGLE + [url], progress_callback=progress_callback)
     if ok:
         for fn in os.listdir(DOWNLOAD_DIR):
             if uniq in fn and fn.endswith(".mp3"): return os.path.join(DOWNLOAD_DIR, fn), ""
+    logger.info("Audio download failed: %s", serr[:100] if serr else "no error")
     return None, "Error"
 
 def download_playlist_audio(url):
