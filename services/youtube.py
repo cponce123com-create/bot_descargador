@@ -149,7 +149,7 @@ def download_video(url, format_id="360", progress_callback=None, start_time=None
     if fp:
         if format_id == "vertical" or format_id == "720":
             v = _crop_vertical(fp)
-            return (v, "") if v else (fp, "")
+            return (v, "", meta) if v else (fp, "", meta)
         return fp, "", meta
     return None, "Error", {}
 
