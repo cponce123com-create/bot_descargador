@@ -206,6 +206,7 @@ async def format_callback(up, ctx):
     c = q.data
     await q.answer()
     path = None
+    meta = {}
 
     try:
         from services.youtube import download_video, download_audio
@@ -219,7 +220,6 @@ async def format_callback(up, ctx):
             await q.message.reply_text("✅ Cancelado.")
             return ConversationHandler.END
 
-        # Use reactions + chat action instead of editing status messages
         await _react(q.message, "🫡")
         await ctx.bot.send_chat_action(q.message.chat_id, ChatAction.RECORD_VIDEO)
 
@@ -244,8 +244,8 @@ async def format_callback(up, ctx):
                         cleanup(p)
                     return ConversationHandler.END
             elif c=="yt_audio": path, err = await asyncio.to_thread(download_audio, url, progress)
-            elif c=="yt_gif": path, err = await asyncio.to_thread(download_video, url, progress_callback=progress, to_gif=True, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
-            else: path, err = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+            elif c=="yt_gif": path, err, meta = await asyncio.to_thread(download_video, url, progress_callback=progress, to_gif=True, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+            else: path, err, meta = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
         finally:
             if sem:
                 sem.release()
@@ -253,10 +253,11 @@ async def format_callback(up, ctx):
         if path:
             await _react(q.message, "🚀")
             await ctx.bot.send_chat_action(q.message.chat_id, ChatAction.UPLOAD_VIDEO)
+            quality = meta.get("resolution", QUAL.get(c, "HD"))
             await _send_or_fallback(
                 q.message.chat,
                 path, title, url,
-                QUAL.get(c, "HD"), "youtube",
+                quality, "youtube",
                 is_audio=(c=="yt_audio"),
                 is_gif=(c=="yt_gif"),
             )
