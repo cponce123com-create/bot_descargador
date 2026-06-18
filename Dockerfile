@@ -1,21 +1,33 @@
-FROM python:3.12-slim AS runtime
+# syntax=docker/dockerfile:1
+# Multi-stage build: downloads yt-dlp binary and FFmpeg from official builds,
+# installs Node.js for EJS support, and keeps the final image small.
 
-# Install FFmpeg and Deno (required by yt-dlp EJS for JavaScript challenge)
-RUN apt-get update -qq && apt-get install -y -qq ffmpeg curl unzip && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Stage 1: download yt-dlp binary
+FROM docker.io/library/alpine:latest AS yt-dlp-bin
+ARG YT_DLP_VERSION="2026.6.9"
+RUN wget -O /bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}/yt-dlp" && chmod +x /bin/yt-dlp
 
-RUN curl -fsSL https://deno.land/install.sh | sh && mv /root/.deno/bin/deno /usr/local/bin/deno && rm -rf /root/.deno && deno --version
+# Stage 2: download FFmpeg from yt-dlp's official builds
+FROM docker.io/library/alpine:latest AS ffmpeg-bin
+RUN APK_ARCH="$(apk --print-arch)" && case "${APK_ARCH}" in x86_64) FILE="ffmpeg-master-latest-linux64-gpl.tar.xz" ;; aarch64) FILE="ffmpeg-master-latest-linuxarm64-gpl.tar.xz" ;; *) echo >&2 "error: unsupported arch: ${APK_ARCH}"; exit 1 ;; esac && wget -O /tmp/ffmpeg.tar.xz "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/${FILE}" && mkdir -p /tmp/ffmpeg && tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1 && mv /tmp/ffmpeg/bin/ffmpeg /tmp/ffmpeg/bin/ffprobe /bin/ && chmod +x /bin/ffmpeg /bin/ffprobe && rm -rf /tmp/ffmpeg /tmp/ffmpeg.tar.xz
+
+# Stage 3: runtime image
+FROM docker.io/library/python:3.12-slim
+
+# Install Node.js 24 via nodesource (required by yt-dlp EJS)
+RUN apt-get update -qq && apt-get install -y -qq curl ca-certificates gnupg && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y -qq nodejs && apt-get clean && rm -rf /var/lib/apt/lists/* && node --version
+
+# Copy yt-dlp and FFmpeg from build stages
+COPY --from=yt-dlp-bin /bin/yt-dlp /bin/yt-dlp
+COPY --from=ffmpeg-bin /bin/ffmpeg /bin/ffprobe /bin/
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Verify all runtime components
-RUN yt-dlp --version && python -c "import yt_dlp_ejs; print('yt-dlp-ejs:', yt_dlp_ejs._version)" && deno eval "console.log('Deno OK')"
+RUN pip install --no-cache-dir -r requirements.txt && yt-dlp --version && ffmpeg -version | head -1 && node -e "console.log('Node:', process.version)" && python -c "import yt_dlp_ejs; print('yt-dlp-ejs:', yt_dlp_ejs._version)"
 
 COPY . .
 
-# Best-effort auto-update on build (won't break if offline)
 RUN yt-dlp -U || true
 
 CMD ["python3", "bot.py"]
