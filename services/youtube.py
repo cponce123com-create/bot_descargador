@@ -129,16 +129,25 @@ def _crop_vertical(path):
     return None
 
 
+# Format selectors by quality:
+#   "360"  -> 360p for horizontal video (small, fast)
+#   "720"  -> 720p max for vertical crop (better quality after cropping)
+FMT_SELECTOR = {
+    "360": "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]",
+    "720": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
+}
+
+
 def download_video(url, format_id="360", progress_callback=None, start_time=None, end_time=None):
     _cleanup();
     uniq = uuid.uuid4().hex[:8]
-    fmt = "bv*[ext=mp4][filesize<2G]+ba[ext=m4a][filesize<2G]/bv*[ext=mp4]+ba[ext=m4a]/best[filesize<2G]/best"
+    fmt = FMT_SELECTOR.get(format_id, FMT_SELECTOR["360"])
     extra = []
     if start_time and end_time:
         extra.extend(["--download-sections", f"*{start_time}-{end_time}", "--force-keyframes-at-cuts"])
     fp, meta = _try_download(uniq, [fmt], extra, progress_callback, url)
     if fp:
-        if format_id == "vertical":
+        if format_id == "vertical" or format_id == "720":
             v = _crop_vertical(fp)
             return (v, "") if v else (fp, "")
         return fp, "", meta

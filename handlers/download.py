@@ -226,7 +226,7 @@ async def format_callback(up, ctx):
                         cleanup(p)
                     return ConversationHandler.END
             elif c=="yt_audio": path, err = await asyncio.to_thread(download_audio, url, progress)
-            else: path, err, meta = await asyncio.to_thread(download_video, url, format_id=("vertical" if c=="yt_vertical" else "360"), progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
+            else: path, err, meta = await asyncio.to_thread(download_video, url, format_id="720" if c=="yt_vertical" else "360", progress_callback=progress, start_time=trim[0] if trim else None, end_time=trim[1] if trim else None)
         finally:
             if sem:
                 sem.release()
